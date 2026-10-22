@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# graft deploy: builds the app (graft-build) and installs and launches it on the phone
+# (iphone-deploy), or installs an .app already built.
+#
+#   graft-deploy [--configuration NAME | --release] [--provision] [TARGET | APP.app]
+set -euo pipefail
+deploy_args=() build_args=() app=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --provision) deploy_args+=(--provision) ;;
+    --release) build_args+=(--release) ;;
+    --configuration) build_args+=(--configuration "${2:?--configuration needs a name}"); shift ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *.app | *.app/) app=$1 ;;
+    *) build_args+=("$1") ;;
+  esac
+  shift
+done
+if [ -z "$app" ]; then
+  path=$(mktemp)
+  GRAFT_APP_FILE=$path graft-build "${build_args[@]}"
+  app=$(cat "$path")
+  rm -f "$path"
+fi
+exec iphone-deploy "${deploy_args[@]}" "$app"

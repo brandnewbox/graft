@@ -110,21 +110,32 @@ phone's LAN address).
 
 ## Use
 
-From the project's root:
+At the project's root:
 
 ```sh
-graft                                    # a shell, the project at the same path
-graft xtool dev build                    # or one command
-graft deploy path/to/MyApp.app           # sign, install, launch on the phone
+graft build                              # a Debug build of the app
+graft build --release                    # a Release build
+graft build --configuration Beta         # a build of another configuration
+graft deploy                             # build, then sign, install and launch it on the phone
+graft deploy --release                   # the same with a Release build
+graft deploy path/to/MyApp.app           # an app already built: sign, install and launch it
 ```
 
-The app has to be under the current directory, which is what the container sees.
+The container sees the current directory at the same path, so run graft at the project's root, and
+an app you deploy has to be under it.
+
+An xtool package (`xtool.yml` at the root) builds as it is, into `xtool/<App>.app`. An Xcode project
+builds through an adapter (below), and `build` and `deploy` take the app target there:
+`graft build MyApp`. The configuration is `Debug` unless you give one; `Debug` is a SwiftPM debug
+build and every other configuration a release build. graft builds with omarchy-apple-dev's
+`ship.sh --device`, not `xtool dev build`: it also copies the app's resources to the bundle root,
+where Xcode puts them and `Bundle.main` finds them.
 
 **Unlock the phone before you deploy.** An idle phone closes the port the tunnel uses (deploy
 says "The phone didn't answer"), and a locked one can stall an install or refuse the launch.
 Unlock it and deploy again.
 
-`deploy` signs, opens the tunnel, installs and launches. Signing uses an iOS Development certificate
+After the build, `deploy` signs, opens the tunnel, installs and launches. Signing uses an iOS Development certificate
 and a profile per bundle ID (the app's and its extensions') kept in `graft-state`. Only when one
 is missing, expires within a day or doesn't list the phone (or with `deploy --provision`) does it go
 to App Store Connect with the API key, to register the phone in the team and make them. The rest of
@@ -139,21 +150,28 @@ Xcode (and the image tag for its Swift) means `setup` again.
 
 ## An Xcode project
 
-xtool builds a SwiftPM package, so an Xcode project needs an adapter: a package that builds the app
-target. omarchy-apple-dev's converter writes one:
+xtool builds a SwiftPM package, so an Xcode project needs an adapter: a package that builds one app
+target in one configuration. graft makes it with its converter on every build, in
+`.graft/<Target>/<Configuration>/`, so it follows the project; that takes a fraction of a second.
+Only the files that changed are copied over the last adapter, and its build tree stays, so the build
+is incremental. The app is at `.graft/<Target>/<Configuration>/xtool/<App>.app`. `.graft/` ignores
+itself in git.
 
-```sh
-graft bash -c 'python3 ~/omarchy-apple-dev/tools/xcodeproj2xtool.py App.xcodeproj'
+The converter reads the configuration's settings, as Xcode does: its Info.plist, bundle ID,
+xcconfig files and compilation conditions. A Debug build can have its own bundle ID or App
+Transport Security settings in the Xcode project, and the adapter follows. The package versions
+are the ones in the project's `Package.resolved`, as in Xcode. Read the converter's `warning:`
+lines; when it gets a project wrong, fix the converter (`converter/`, see Maintaining).
+
+Settings go in `graft.yml` at the project's root. Both keys are optional:
+
+```yaml
+project: ios/MyApp.xcodeproj    # the Xcode project; default: the only one found
+target: MyApp                   # the app target when none is given; default: the only one
 ```
 
-Read its `warning:` lines and check the resources in the `Package.swift` it writes; a project script
-that regenerates the adapter and corrects what the converter misreads keeps it reproducible. Apps
-that read resources through `Bundle.main` need them at the bundle root, as Xcode lays them out:
-build with `CONFIGURATION=debug ~/omarchy-apple-dev/ship.sh --device` in the adapter instead of
-`xtool dev build`.
-
-Paths like `~/omarchy-apple-dev` are inside the container: quote them in `bash -c '...'`, or the
-host's shell expands `~` first.
+With a `graft.yml`, graft builds the project as an Xcode project even when there is an `xtool.yml`.
+Each key is one line, `key: value`; graft doesn't read more of YAML than that.
 
 ## Trademarks
 
@@ -164,8 +182,15 @@ own Xcode download, under Apple's license.
 ## Maintaining
 
 The image holds the toolchain, the scripts in `bin/` (the entrypoint, `setup-sdk`, `iphone-pair`,
-`iphone-deploy`) and `launcher`, the host side of the commands. It's open source only, one per
-Swift version.
+`graft-build`, `graft-deploy`, `iphone-deploy`), the converter and `launcher`, the
+host side of the commands. It's open source only, one per Swift version.
+
+`converter/xcodeproj2xtool.py` is a copy of omarchy-apple-dev's converter, under its MIT license
+(`converter/LICENSE`), changed for graft: it reads a configuration given with `--configuration`
+(upstream reads only Release), and it skips resources that are in the project but not on disk. The
+image puts it over upstream's, beside the tools it calls. Its header names the upstream commit it
+came from: when `OMARCHY_REF` moves, diff upstream's file from that commit to the new one, apply
+what's useful, and update the header. CI runs its `--self-test`.
 
 GitHub Actions builds it (`.github/workflows/image.yml`): every pull request builds it and checks
 the tools start. To release, tag the commit:
