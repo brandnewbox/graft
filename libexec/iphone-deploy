@@ -10,7 +10,7 @@
 # ASC_KEY_PATH) only when one is missing, expires within a day or leaves out the device, or with
 # --provision; the
 # rest of the time this needs no Apple account or internet. When it needs the key and has none, it
-# exits 75: the launcher then fetches the key with ASC_KEY_COMMAND and runs it again. Install: a
+# exits 75: graft then fetches the key with ASC_KEY_COMMAND and runs it again. Install: a
 # RemotePairing tunnel to the device's Tailscale address (its port, or upstream's scan of
 # 49152-49167), with its pairing record in /state/pymobiledevice3.
 set -euo pipefail

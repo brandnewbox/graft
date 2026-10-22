@@ -1,0 +1,68 @@
+# Checks graft, the command (graft, libexec/, vendor/, toolchains), and releases it.
+#
+#   pull request, push to main    check
+#   tag vX.Y.Z                    check, then release: a GitHub release with graft.tar.gz (what
+#                                 install.sh installs) and install.sh
+#
+# A release needs every image in toolchains pinned by digest, so a graft version always runs the
+# same toolchains (README.md, Maintaining).
+name: CLI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # SC1007: `a= b=` is how the scripts clear variables. SC1090: the settings file is sourced.
+      - name: Shell
+        run: |
+          shellcheck -S warning -e SC1007,SC1090 graft install.sh libexec/*
+          bash -n graft libexec/*
+
+      - name: Converter
+        run: python3 vendor/omarchy-apple-dev/tools/xcodeproj2xtool.py --self-test
+
+      - name: Toolchains
+        run: |
+          awk '{ sub(/#.*/, "") } NF && NF != 3 { print "toolchains:" NR ": expected XCODE SWIFT IMAGE"; bad = 1 }
+            END { exit bad }' toolchains
+          ./graft version
+
+  release:
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchains pinned
+        run: |
+          awk '{ sub(/#.*/, "") } NF && $3 !~ /@sha256:[0-9a-f]{64}$/ { print "toolchains: Xcode " $1 " isn'\''t pinned by digest: " $3; bad = 1 }
+            END { exit bad }' toolchains
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          awk '{ sub(/#.*/, "") } NF { print $3 }' toolchains | while read -r image; do
+            docker buildx imagetools inspect "$image" >/dev/null
+          done
+
+      - name: Package
+        run: |
+          mkdir -p dist/graft
+          cp -r graft libexec vendor toolchains dist/graft/
+          echo "${GITHUB_REF_NAME#v}" > dist/graft/VERSION
+          tar -C dist -czf graft.tar.gz graft
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" graft.tar.gz install.sh --title "graft ${GITHUB_REF_NAME#v}" --generate-notes

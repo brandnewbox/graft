@@ -1,9 +1,196 @@
 #!/usr/bin/env bash
-# graft: build iOS apps on Linux in a container and install them on an iPhone over Tailscale
-# (https://github.com/brandnewbox/graft). The commands are the launcher inside the image, so
-# they change with the image and this file doesn't: it pulls the image if needed and runs that.
+# graft (https://github.com/brandnewbox/graft): builds iOS apps on Linux in a toolchain container, and
+# installs them on an iPhone or iPad over Tailscale. This runs on the host. The toolchain image holds
+# only the toolchain: graft's commands (libexec/) and its copies of omarchy-apple-dev's tools
+# (vendor/) go into the container from here, so they are always this version's.
+#
+#   graft setup [--xcode VERSION] XCODE.xip
+#                                       once per machine and Xcode: make that Xcode's SDK (VERSION:
+#                                       from the file name, Xcode_27.1.xip, when not given)
+#   graft pair NAME TAILNET_IP FILE     once per device: import its pairing record, made on a Mac,
+#                                       and add it to the devices as NAME (alone: how)
+#   graft build [--configuration NAME | --release] [TARGET]
+#                                       build the app in the current directory (graft-build)
+#   graft deploy [--configuration NAME | --release] [--provision] [--device NAME] [TARGET | APP.app]
+#                                       build, then sign, install and launch it on a device
+#   graft devices [add NAME TAILNET_IP [UDID] [--port PORT] | default NAME | remove NAME]
+#                                       list the devices, or change them (graft-devices)
+#   graft version                       graft's version and the Xcodes it has toolchains for
+#
+# Run build and deploy at the project's root, which is mounted at the same path. The project's Xcode
+# is xcode: in graft.yml, else .xcode-version, else the newest in toolchains; that picks the image
+# (toolchains) and the SDK (the graft-sdk-<Xcode> volume). GRAFT_XCODE overrides the project's;
+# GRAFT_IMAGE runs another toolchain image, for the Xcode in its org.brandnewbox.graft.xcode label.
+#
+# The devices are in ~/.config/graft/devices. Settings, from the environment or ~/.config/graft/env:
+#   ASC_KEY_ID, ASC_ISSUER_ID    an App Store Connect API key, for development signing, and either
+#   ASC_KEY_COMMAND              a command that prints its .p8 (op read ..., gpg -d ...), run
+#                                only when a deploy goes to App Store Connect, or
+#   ASC_KEY_PATH                 the .p8 file itself
 set -euo pipefail
-image=${GRAFT_IMAGE:-ghcr.io/brandnewbox/graft:swift-6.4.1}
-docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
-launcher=$(docker run --rm --entrypoint cat "$image" /usr/local/share/graft/launcher)
-GRAFT_IMAGE=$image exec bash -c "$launcher" graft "$@"
+root=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/graft
+config=$config_dir/env
+if [ -f "$config" ]; then set -a; . "$config"; set +a; fi
+
+toolchains() { # XCODE SWIFT IMAGE, a line each
+  awk '{ sub(/#.*/, "") } NF == 3' "$root/toolchains"
+}
+
+setting() { # graft.yml's value for KEY, without quotes or a comment (as graft-build reads it)
+  [ -f graft.yml ] || return 0
+  sed -n "s/^$1:[[:space:]]*//p" graft.yml | sed -e 's/[[:space:]]*#.*$//' -e "s/^[\"']//" -e "s/[\"']\$//" | head -n1
+}
+
+# The project's Xcode, as "VERSION WHERE_FROM", or nothing.
+project_xcode() {
+  local v
+  if [ -n "${GRAFT_XCODE:-}" ]; then echo "$GRAFT_XCODE GRAFT_XCODE"; return; fi
+  v=$(setting xcode)
+  if [ -n "$v" ]; then echo "$v graft.yml"; return; fi
+  if [ -f .xcode-version ]; then
+    v=$(sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p}' .xcode-version)
+    if [ -n "$v" ]; then echo "$v .xcode-version"; return; fi
+  fi
+}
+
+# Sets xcode and image for Xcode VERSION (WHERE_FROM names where the version came from, for the
+# error), and pulls the image if needed.
+use_toolchain() { # VERSION WHERE_FROM
+  local line
+  if [ -n "${GRAFT_IMAGE:-}" ]; then
+    image=$GRAFT_IMAGE
+    docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
+    xcode=$(docker image inspect -f '{{ index .Config.Labels "org.brandnewbox.graft.xcode" }}' "$image")
+    [ -n "$xcode" ] || { echo "$image has no org.brandnewbox.graft.xcode label: not a graft toolchain" >&2; exit 1; }
+    return
+  fi
+  line=$(toolchains | awk -v x="$1" '$1 == x')
+  if [ -z "$line" ]; then
+    echo "graft has no toolchain for Xcode $1 ($2); it has Xcode $(toolchains | awk '{ print $1 }' | sort -V | paste -sd ' ')." >&2
+    echo "Change the version, or update graft." >&2
+    exit 1
+  fi
+  read -r xcode _ image <<<"$line"
+  docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
+}
+
+# The project's toolchain. With --any (a command that doesn't build) and no project Xcode, the newest
+# one already pulled, rather than pulling another.
+project_toolchain() { # [--any]
+  local want from
+  read -r want from < <(project_xcode) || true
+  if [ -z "${want:-}" ] && [ "${1:-}" = --any ]; then
+    read -r want _ _ < <(toolchains | sort -V -r -k1,1 | while read -r x s i; do
+      if docker image inspect "$i" >/dev/null 2>&1; then echo "$x $s $i"; break; fi
+    done) || true
+  fi
+  if [ -z "${want:-}" ]; then
+    want=$(toolchains | awk '{ print $1 }' | sort -V | tail -n1)
+    from="graft's newest; set xcode: in graft.yml for another"
+  fi
+  use_toolchain "$want" "${from:-}"
+}
+
+run() { # [docker run options...] -- CMD...
+  local opts=(--rm -i --network host --cap-add NET_ADMIN --device /dev/net/tun
+    -v graft-state:/state -v "graft-sdk-$xcode:/sdk" -v "$PWD:$PWD" -w "$PWD"
+    -v "$config_dir:/graft" -v "$root/libexec:/opt/graft/bin:ro"
+    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e ASC_KEY_ID -e ASC_ISSUER_ID)
+  local tool
+  # Over upstream's, beside the tools they call.
+  for tool in "$root"/vendor/omarchy-apple-dev/tools/*.py; do
+    opts+=(-v "$tool:/home/dev/omarchy-apple-dev/tools/${tool##*/}:ro")
+  done
+  if [ -t 0 ] && [ -t 1 ]; then opts+=(-t); fi
+  if [ -n "${ASC_KEY_PATH:-}" ]; then
+    opts+=(-v "$(realpath "${ASC_KEY_PATH/#\~/$HOME}"):/asc/key.p8:ro" -e ASC_KEY_PATH=/asc/key.p8)
+  fi
+  while [ "$1" != -- ]; do opts+=("$1"); shift; done
+  shift
+  docker run "${opts[@]}" "$image" "$@"
+}
+
+mkdir -p "$config_dir"
+case "${1:-}" in
+setup)
+  shift
+  want=
+  if [ "${1:-}" = --xcode ]; then want=${2:?--xcode needs a version}; shift 2; fi
+  [ $# = 1 ] || { echo "usage: graft setup [--xcode VERSION] XCODE.xip" >&2; exit 2; }
+  xip=$(realpath "$1")
+  [ -f "$xip" ] || { echo "no such file: $xip" >&2; exit 1; }
+  if [ -z "$want" ]; then
+    [[ "$(basename "$xip")" =~ ^Xcode_([0-9]+(\.[0-9]+)*)[._] ]] ||
+      { echo "the file name doesn't say which Xcode it is: graft setup --xcode VERSION $1" >&2; exit 2; }
+    want=${BASH_REMATCH[1]}
+  fi
+  use_toolchain "$want" "$(basename "$xip")"
+  # Unpacking the .xip takes about 16 GB at its peak; the SDK is 3.4 GB after.
+  free=$(df --output=avail -k "$(docker info -f '{{.DockerRootDir}}')" | tail -1)
+  if [ "$free" -lt $((20 * 1024 * 1024)) ]; then
+    echo "making the SDK needs 20 GB free for Docker, $((free / 1024 / 1024)) GB is" >&2
+    exit 1
+  fi
+  run -v "$xip:/tmp/Xcode.xip:ro" -- setup-sdk /tmp/Xcode.xip
+  ;;
+pair)
+  shift
+  project_toolchain --any
+  if [ $# = 3 ]; then
+    file=$(realpath "$3")
+    [ -f "$file" ] || { echo "no such file: $3" >&2; exit 1; }
+    run -v "$file:/tmp/$(basename "$file"):ro" -- iphone-pair "$1" "$2" "/tmp/$(basename "$file")"
+  else
+    run -- iphone-pair "$@" # how to pair
+  fi
+  ;;
+build)
+  shift
+  project_toolchain
+  run -- graft-build "$@"
+  ;;
+devices)
+  shift
+  project_toolchain --any
+  run -- graft-devices "$@"
+  ;;
+deploy)
+  shift
+  project_toolchain
+  if [ -z "${ASC_KEY_COMMAND:-}" ]; then
+    run -- graft-deploy "$@"
+    exit
+  fi
+  # Without the key first: most deploys don't go to App Store Connect. When one has to (exit 75),
+  # fetch the key into a file in memory and run again; the build is incremental by then.
+  status=0
+  ASC_KEY_PATH='' run -e GRAFT_KEY_ON_DEMAND=1 -- graft-deploy "$@" || status=$?
+  if [ "$status" != 75 ]; then exit "$status"; fi
+  key=$(mktemp -p "${XDG_RUNTIME_DIR:-/dev/shm}" asc-key.XXXXXX)
+  trap 'rm -f "$key"' EXIT
+  echo "== Fetching the App Store Connect key (ASC_KEY_COMMAND) ==" >&2
+  sh -c "$ASC_KEY_COMMAND" >"$key"
+  grep -q 'BEGIN PRIVATE KEY' "$key" || { echo "ASC_KEY_COMMAND didn't print a .p8 key" >&2; exit 1; }
+  ASC_KEY_PATH=$key run -- graft-deploy "$@"
+  ;;
+version | --version)
+  if [ -f "$root/VERSION" ]; then
+    echo "graft $(cat "$root/VERSION")"
+  else
+    echo "graft $(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo unknown) (from a checkout)"
+  fi
+  toolchains | sort -V -k1,1 | while read -r x s _; do echo "Xcode $x (Swift $s)"; done
+  ;;
+*)
+  cat >&2 <<'EOF'
+usage: graft setup [--xcode VERSION] XCODE.xip
+       graft pair NAME TAILNET_IP FILE
+       graft build [--configuration NAME | --release] [TARGET]
+       graft deploy [--configuration NAME | --release] [--provision] [--device NAME] [TARGET | APP.app]
+       graft devices [add NAME TAILNET_IP [UDID] [--port PORT] | default NAME | remove NAME]
+       graft version
+EOF
+  exit 2
+  ;;
+esac

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# graft devices: the devices graft deploys to, in ~/.config/graft/devices, which the launcher mounts
+# graft devices: the devices graft deploys to, in ~/.config/graft/devices, which graft mounts
 # at /graft/devices. graft pair adds them. Each line is a device, the first the default:
 #
 #   NAME  TAILNET_IP  UDID  [PORT]      e.g.  ipad  100.64.0.9  00008112-001A2B3C4D5E001C

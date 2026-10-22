@@ -5,26 +5,36 @@ the loop.
 Like a branch grafted onto another tree's rootstock, the toolchain for Apple's platforms grows on
 Linux here.
 
-A container image with the toolchain from [omarchy-apple-dev](https://github.com/joshuaswarren/omarchy-apple-dev)
-(Swift 6.4, xtool, pymobiledevice3) on Ubuntu 24.04, and a command, `graft`, that starts it
-with what it needs (the current directory, host networking, a TUN device for the tunnel to the
-device). The commands themselves (`launcher`) ship in the image; the `graft` file only pulls the
-image and runs them, so the commands update with the image.
+A command, `graft`, and a container image for each Xcode with the toolchain from
+[omarchy-apple-dev](https://github.com/joshuaswarren/omarchy-apple-dev) (Swift, xtool,
+pymobiledevice3) on Ubuntu 24.04. The project names its Xcode, and that picks the image. graft
+starts it with what it needs (the current directory, host networking, a TUN device for the tunnel
+to the device) and with graft's own commands, which aren't in the image.
 
-Nothing in the image is per project or per person. Two Docker volumes are per machine and shared by
-every project: `graft-sdk`, the iOS SDK, which each machine makes once from its own Xcode
-download (Apple's license keeps it out of the image), and `graft-state`, the devices' pairing
-records and the development signing identities. The list of devices is in `~/.config/graft/devices`.
+Nothing in the images is per project or per person. Docker volumes are per machine and shared by
+every project: `graft-sdk-<Xcode>` (`graft-sdk-27.1`), the iOS SDK, which each machine makes once
+per Xcode from its own Xcode download (Apple's license keeps it out of the image), and
+`graft-state`, the devices' pairing records and the development signing identities. The list of
+devices is in `~/.config/graft/devices`.
 
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/brandnewbox/graft/main/graft -o ~/.local/bin/graft
-chmod +x ~/.local/bin/graft
+curl -fsSL https://github.com/brandnewbox/graft/releases/latest/download/install.sh | sh
 ```
 
-The file pins the image tag (`GRAFT_IMAGE` overrides it). A project can also keep a copy of it,
-so a fresh clone has the command without installing anything; the project's README then says where.
+It installs the latest release in `~/.local/share/graft`, with the command at `~/.local/bin/graft`.
+Run it again to update; `GRAFT_VERSION=0.3.0` before `sh` installs that release instead.
+
+Or by hand: download `graft.tar.gz` from a release on
+<https://github.com/brandnewbox/graft/releases>, then
+
+```sh
+rm -rf ~/.local/share/graft && tar -xzf graft.tar.gz -C ~/.local/share
+ln -sfn ~/.local/share/graft/graft ~/.local/bin/graft
+```
+`graft version` says which graft it is and which Xcodes it has toolchains for. Each graft release
+runs the same toolchain images, pinned by digest.
 
 ## Setup, once per machine
 
@@ -32,21 +42,23 @@ You need:
 
 - x86_64 Linux with Docker (your user in the `docker` group) and Tailscale, on the tailnet the
   devices are on;
-- 30 GB free for Docker during setup; after, the image is 6.2 GB and the SDK 3.5 GB;
+- 30 GB free for Docker during setup; after, each Xcode's image is 6.2 GB and its SDK 3.5 GB;
 - an iPhone or iPad on iOS 27 with the Tailscale app;
 - an App Store Connect API key for a paid team: App Store Connect → Users and Access →
   Integrations → App Store Connect API → Team Keys, App Manager role. Making one takes Admin or
   Account Holder, and the .p8 downloads once.
 
-1. **The SDK.** Download the Xcode .xip from <https://developer.apple.com/download/all/?q=Xcode>
-   (Xcode 27.1 for the `swift-6.4.1` image), then
+1. **The SDK.** Download the .xip of the Xcode your projects build with (see The Xcode, below)
+   from <https://developer.apple.com/download/all/?q=Xcode>, then
 
    ```sh
    graft setup ~/Downloads/Xcode_27.1.xip
    ```
 
-   It pulls the image and makes the SDK in the `graft-sdk` volume: about 7 minutes after the
-   download. The .xip isn't needed after.
+   It pulls that Xcode's toolchain image, checks the .xip is that Xcode (a minute), and makes the
+   SDK in its volume, `graft-sdk-27.1`: about 7 minutes more. The .xip isn't needed after. The
+   Xcode is in the file's name; for a file named otherwise, `graft setup --xcode 27.1 FILE`.
+   Another Xcode is another setup.
 
 2. **Settings**, in `~/.config/graft/env`:
 
@@ -57,7 +69,7 @@ You need:
    ```
 
    The .p8 can manage the whole team's certificates, devices and profiles, so keep it encrypted.
-   `ASC_KEY_COMMAND` is a command that prints it. The launcher runs it only when a deploy has to go
+   `ASC_KEY_COMMAND` is a command that prints it. graft runs it only when a deploy has to go
    to App Store Connect (the first for an app or a device, then yearly), puts the key in a file in
    memory (`$XDG_RUNTIME_DIR`) for that run, and deletes it after.
 
@@ -151,6 +163,21 @@ graft deploy --device ipad               # on another device than the default (s
 The container sees the current directory at the same path, so run graft at the project's root, and
 an app you deploy has to be under it.
 
+### The Xcode
+
+A project builds with one Xcode's SDK and that Xcode's Swift. graft takes the version from
+`xcode:` in `graft.yml` (see An Xcode project), else from `.xcode-version` (the file xcodes and
+fastlane read), else it uses the newest Xcode it has a toolchain for. Name it, so a graft update
+doesn't move the project to a new Xcode:
+
+```yaml
+xcode: 27.1
+```
+
+The version has to be one in `graft version`; for one that isn't, update graft. `GRAFT_XCODE=27.1`
+before a command overrides the project's. A build with no SDK for the Xcode says which .xip to
+download for `graft setup`.
+
 An xtool package (`xtool.yml` at the root) builds as it is, into `xtool/<App>.app`. An Xcode project
 builds through an adapter (below), and `build` and `deploy` take the app target there:
 `graft build MyApp`. The configuration is `Debug` unless you give one; `Debug` is a SwiftPM debug
@@ -173,8 +200,9 @@ Profiles it makes are named `omarchy-apple-dev development <bundle id>`, and it 
 A free Apple ID can't be used: xtool signs with one only inside `xtool dev run`, which needs the
 device on USB.
 
-New images: `docker pull ghcr.io/brandnewbox/graft:swift-6.4.1`. The SDK stays; only a new
-Xcode (and the image tag for its Swift) means `setup` again.
+A graft update can bring new toolchain images, which graft pulls when it first needs them. The SDK
+stays: the first run with a new image puts that image's build tools in the SDK, in seconds. Only a
+new Xcode means `setup` again.
 
 ## An Xcode project
 
@@ -191,15 +219,16 @@ Transport Security settings in the Xcode project, and the adapter follows. The p
 are the ones in the project's `Package.resolved`, as in Xcode. Read the converter's `warning:`
 lines; when it gets a project wrong, fix the converter (graft's copy, in `vendor/`; see Maintaining).
 
-Settings go in `graft.yml` at the project's root. Both keys are optional:
+Settings go in `graft.yml` at the project's root. Every key is optional:
 
 ```yaml
+xcode: 27.1                     # the Xcode to build with (The Xcode, above)
 project: ios/MyApp.xcodeproj    # the Xcode project; default: the only one found
 target: MyApp                   # the app target when none is given; default: the only one
 ```
 
-With a `graft.yml`, graft builds the project as an Xcode project even when there is an `xtool.yml`.
-Each key is one line, `key: value`; graft doesn't read more of YAML than that.
+With `project:` or `target:`, graft builds the project as an Xcode project even when there is an
+`xtool.yml`. Each key is one line, `key: value`; graft doesn't read more of YAML than that.
 
 ## Trademarks
 
@@ -209,13 +238,23 @@ own Xcode download, under Apple's license.
 
 ## Maintaining
 
-The image holds the toolchain, the scripts in `bin/` (the entrypoint, `setup-sdk`, `iphone-pair`,
-`graft-build`, `graft-deploy`, `graft-devices`, `iphone-deploy`), graft's copies of some of
-omarchy-apple-dev's tools and `launcher`, the host side of the commands. It's open source only, one
-per Swift version.
+graft is two things, versioned apart:
+
+- **The command**: `graft`, which runs on the host; `libexec/`, the commands it runs in the container
+  (`graft-build`, `graft-deploy`, `graft-devices`, `iphone-deploy`, `iphone-pair`); graft's copies
+  of some of omarchy-apple-dev's tools (`vendor/`); and `toolchains`, the image for each Xcode.
+  Releases are `vX.Y.Z` tags.
+- **The toolchain images** (`toolchain/`): the toolchain, built for one Xcode and its Swift, with
+  only the scripts that make and run it (the entrypoint, `home-writable`, `installer-steps`,
+  `setup-sdk`). They're open source only.
+
+graft mounts `libexec/` at `/opt/graft/bin`, which the image puts on `PATH`, and the vendored tools
+over upstream's in `/home/dev/omarchy-apple-dev/tools/`. So a change to the commands is a graft
+release alone, and the commands can use anything in an image that `toolchains` pins; the image
+workflow checks the files they use are there.
 
 `vendor/omarchy-apple-dev/tools/` holds copies of omarchy-apple-dev's tools, under its MIT license
-(`vendor/omarchy-apple-dev/LICENSE`), changed for graft; the image puts them over upstream's, beside
+(`vendor/omarchy-apple-dev/LICENSE`), changed for graft; graft mounts them over upstream's, beside
 the tools they call:
 
 - `xcodeproj2xtool.py`, the converter: it reads a configuration given with `--configuration`
@@ -226,28 +265,47 @@ the tools they call:
 Each one's header names the upstream commit it came from. When `OMARCHY_REF` moves, diff
 upstream's file from that commit to the new one, apply what's useful, and update the header.
 
-GitHub Actions builds it (`.github/workflows/image.yml`): every pull request builds it and checks
-the tools start. To release, tag the commit:
+### Toolchain images
 
-```sh
-git tag v0.2.0 && git push origin v0.2.0
-```
+`.github/workflows/toolchain.yml` builds an image for each Xcode in its matrix, with that Xcode's
+Swift, and checks the tools start: on pull requests that change `toolchain/`. On main, and when run
+from the Actions tab, it also publishes `ghcr.io/brandnewbox/graft-toolchain:xcode-27.1` and
+`xcode-27.1-<short commit>`, and the job's summary has the image's line for `toolchains`, pinned by
+digest. Publishing changes nothing for users: graft runs only what `toolchains` pins.
 
-That publishes `ghcr.io/brandnewbox/graft:swift-6.4.1`, the tag the `graft` command pulls, and
-`swift-6.4.1-0.2.0`, which stays fixed, to go back to. Users get a release with
-`docker pull ghcr.io/brandnewbox/graft:swift-6.4.1`. To try a branch first, run the workflow from
-the Actions tab with "publish" ticked: it publishes `swift-6.4.1-<short commit>`, which
-`GRAFT_IMAGE` selects. A new Swift version is a new entry in the workflow's `swift` list, with the
-matching Xcode in this README.
+A new Xcode is a new matrix entry, `xcode` and the `swift` it ships. Its line goes in `toolchains`
+once it's published.
+
+The entrypoint gives the image's user (UID 1000) the caller's UID and GID at start, so it works for
+anyone; `home-writable` opens up the few home directories that builds write to. `OMARCHY_REF` in
+the Dockerfile pins omarchy-apple-dev, and its installer pins xtool. `setup-sdk` copies build tools
+the image built (actool, the macro server) into the SDK and records which (`/sdk/sdk-tools`); when
+an SDK has another image's, the entrypoint installs the running image's.
 
 The first publish makes the package private; make it public once, in the package's settings on
 GitHub. Never publish anything with the SDK in it: Apple's license doesn't allow redistributing it.
 
-To build one locally, for working on the Dockerfile:
-`docker build -t ghcr.io/brandnewbox/graft:swift-6.4.1 --build-arg SWIFT_VERSION=6.4.1 .`
+To build one locally, for working on the Dockerfile, and run graft with it:
 
-The entrypoint gives the image's user (UID 1000) the caller's UID and GID at start, so it works for
-anyone; `bin/home-writable` opens up the few home directories that builds write to. `OMARCHY_REF` in
-the Dockerfile pins omarchy-apple-dev, and its installer pins xtool. The `graft` file runs
-whatever launcher the image has, so `launcher` can change freely; keep `graft` itself stable,
-since people and projects keep copies of it.
+```sh
+docker build -t graft-toolchain:dev --build-arg XCODE_VERSION=27.1 --build-arg SWIFT_VERSION=6.4.1 toolchain
+GRAFT_IMAGE=graft-toolchain:dev graft build
+```
+
+`GRAFT_IMAGE` runs any toolchain image, with the SDK of the Xcode in its label.
+
+### Releases
+
+`.github/workflows/cli.yml` checks the command on every pull request: shellcheck, the converter's
+self-test, and `toolchains`. To release, pin every image in `toolchains` by digest (the lines from
+the image workflow's summary), then tag the commit:
+
+```sh
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+That makes a GitHub release with `graft.tar.gz` and `install.sh`, which installs it. The release
+fails when an image in `toolchains` isn't pinned by digest, or isn't published.
+
+To work on the command, run `./graft` from a checkout: it finds `libexec/`, `vendor/` and
+`toolchains` beside itself.
