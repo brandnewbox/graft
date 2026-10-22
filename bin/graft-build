@@ -29,6 +29,10 @@ if [ "$configuration" = Debug ]; then mode=debug; fi
 O=$HOME/omarchy-apple-dev
 converter=$O/tools/xcodeproj2xtool.py
 
+# graft setup makes the SDK; without it the build fails deep in SwiftPM.
+[ -d "$HOME/.swiftpm/swift-sdks/darwin.artifactbundle" ] ||
+  { echo "no iOS SDK on this machine: download Xcode (README), then graft setup XCODE.xip" >&2; exit 1; }
+
 setting() { # graft.yml's value for KEY, without quotes or a comment
   [ -f graft.yml ] || return 0
   sed -n "s/^$1:[[:space:]]*//p" graft.yml | sed -e 's/[[:space:]]*#.*$//' -e "s/^[\"']//" -e "s/[\"']\$//" | head -n1
