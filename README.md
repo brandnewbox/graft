@@ -25,6 +25,14 @@ curl -fsSL https://github.com/brandnewbox/graft/releases/latest/download/install
 
 It installs the latest release in `~/.local/share/graft`, with the command at `~/.local/bin/graft`.
 Run it again to update; `GRAFT_VERSION=0.3.0` before `sh` installs that release instead.
+
+Or by hand: download `graft.tar.gz` from a release on
+<https://github.com/brandnewbox/graft/releases>, then
+
+```sh
+rm -rf ~/.local/share/graft && tar -xzf graft.tar.gz -C ~/.local/share
+ln -sfn ~/.local/share/graft/graft ~/.local/bin/graft
+```
 `graft version` says which graft it is and which Xcodes it has toolchains for. Each graft release
 runs the same toolchain images, pinned by digest.
 
