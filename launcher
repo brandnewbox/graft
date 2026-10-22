@@ -8,12 +8,14 @@
 #   graft pair [FILE]                   once per phone: pair over this machine's USB, or import a record
 #   graft build [--configuration NAME | --release] [TARGET]
 #                                       build the app in the current directory (graft-build)
-#   graft deploy [--configuration NAME | --release] [--provision] [TARGET | APP.app]
-#                                       build, then sign, install and launch it on the phone
+#   graft deploy [--configuration NAME | --release] [--provision] [--device NAME] [TARGET | APP.app]
+#                                       build, then sign, install and launch it on a device
+#   graft devices                       list the devices, with whether each is paired
 #
 # Run build and deploy at the project's root, which is mounted at the same path. Settings, from the
 # environment or ~/.config/graft/env:
-#   IPHONE_TAILNET_IP            the phone's Tailscale address
+#   IPHONE_TAILNET_IP            the phone's Tailscale address, with one device; with more,
+#                                ~/.config/graft/devices lists them (graft-devices)
 #   ASC_KEY_ID, ASC_ISSUER_ID    an App Store Connect API key, for development signing, and either
 #   ASC_KEY_COMMAND              a command that prints its .p8 (op read ..., gpg -d ...), run
 #                                only when a deploy goes to App Store Connect, or
@@ -22,6 +24,7 @@
 set -euo pipefail
 image=${GRAFT_IMAGE:-ghcr.io/brandnewbox/graft:swift-6.4.1}
 config=${XDG_CONFIG_HOME:-$HOME/.config}/graft/env
+devices=${XDG_CONFIG_HOME:-$HOME/.config}/graft/devices
 if [ -f "$config" ]; then set -a; . "$config"; set +a; fi
 
 run() { # [docker run options...] -- CMD...
@@ -29,6 +32,7 @@ run() { # [docker run options...] -- CMD...
     -v graft-state:/state -v graft-sdk:/sdk -v "$PWD:$PWD" -w "$PWD"
     -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e IPHONE_TAILNET_IP -e IPHONE_RP_PORT -e ASC_KEY_ID -e ASC_ISSUER_ID)
   if [ -t 0 ] && [ -t 1 ]; then opts+=(-t); fi
+  if [ -f "$devices" ]; then opts+=(-v "$(realpath "$devices"):/graft/devices:ro"); fi
   if [ -n "${ASC_KEY_PATH:-}" ]; then
     opts+=(-v "$(realpath "${ASC_KEY_PATH/#\~/$HOME}"):/asc/key.p8:ro" -e ASC_KEY_PATH=/asc/key.p8)
   fi
@@ -63,6 +67,10 @@ build)
   shift
   run -- graft-build "$@"
   ;;
+devices)
+  shift
+  run -- graft-devices "$@"
+  ;;
 deploy)
   shift
   if [ -z "${ASC_KEY_COMMAND:-}" ]; then
@@ -86,7 +94,8 @@ deploy)
 usage: graft setup XCODE.xip
        graft pair [FILE]
        graft build [--configuration NAME | --release] [TARGET]
-       graft deploy [--configuration NAME | --release] [--provision] [TARGET | APP.app]
+       graft deploy [--configuration NAME | --release] [--provision] [--device NAME] [TARGET | APP.app]
+       graft devices
 EOF
   exit 2
   ;;

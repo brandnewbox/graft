@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
+# graft's copy of tools/provision-dev.py from joshuaswarren/omarchy-apple-dev, MIT license
+# (vendor/omarchy-apple-dev/LICENSE), taken at d585573d9da52394abba82840f6b5e6d15e304c7. graft's
+# change: --device UDID NAME, repeatable, so the profiles list every device graft deploys to. When
+# OMARCHY_REF moves, diff upstream's file from that commit to the new one and apply what's useful.
 """Development signing identity for one iOS bundle id and one device, through the App Store Connect API.
 
-usage: provision-dev.py --bundle-id ID [ID...] [--udid UDID] [--name NAME] [--out DIR] [--expect-group GROUP]
+usage: provision-dev.py --bundle-id ID [ID...] [--udid UDID] [--name NAME] [--device UDID NAME]...
+                        [--out DIR] [--expect-group GROUP]
 
 Needs ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_PATH, like ship.sh. It makes a local RSA key and a CSR, asks
 Apple for an iOS Development certificate, registers the device (or, without --udid, attaches every
-ENABLED iOS device in the team), registers each bundle id, and deletes and recreates the
+ENABLED iOS device in the team; with --device, those devices), registers each bundle id, and deletes and recreates the
 IOS_APP_DEVELOPMENT profiles that hold both — delete-and-recreate is how a profile picks up a
 capability (e.g. App Groups) configured in the portal after the profile was made. Output in DIR
 (default ~/.config/omarchy-apple-dev/development):
@@ -85,13 +90,18 @@ def main():
     ap.add_argument("--bundle-id", required=True, nargs="+")
     ap.add_argument("--udid")
     ap.add_argument("--name", default="iPhone")
+    ap.add_argument("--device", nargs=2, action="append", metavar=("UDID", "NAME"),
+                    help="a device for the profiles, registered as NAME if it isn't yet; repeatable")
     ap.add_argument("--out", default=str(Path.home() / ".config/omarchy-apple-dev/development"))
     ap.add_argument("--expect-group")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True, mode=0o700)
     cert_id = certificate(out)
-    device_ids = [device(a.udid, a.name)] if a.udid else all_devices()
+    if a.device:
+        device_ids = [device(udid, name) for udid, name in a.device]
+    else:
+        device_ids = [device(a.udid, a.name)] if a.udid else all_devices()
     print(f"certificate {cert_id}, {len(device_ids)} device(s)")
     missing = []
     for bundle_id in a.bundle_id:

@@ -104,7 +104,8 @@ record lets any machine use it.
 
 The phone answers on one RemotePairing port, which the tunnel looks for in 49152-49167. It isn't
 fixed: ours was 49152, and 51211 once while the phone was plugged into a Mac. If the phone is
-unlocked and deploy still says "The phone didn't answer", find the port and set `IPHONE_RP_PORT`.
+unlocked and deploy still says "The device didn't answer", find the port and set `IPHONE_RP_PORT`
+(or the device's PORT in `~/.config/graft/devices`, see Devices).
 On a Mac on the same Wi-Fi: `~/pmd3/bin/pymobiledevice3 bonjour remotepairing` (the entry with the
 phone's LAN address).
 
@@ -119,6 +120,7 @@ graft build --configuration Beta         # a build of another configuration
 graft deploy                             # build, then sign, install and launch it on the phone
 graft deploy --release                   # the same with a Release build
 graft deploy path/to/MyApp.app           # an app already built: sign, install and launch it
+graft deploy --device ipad               # on another device (see Devices)
 ```
 
 The container sees the current directory at the same path, so run graft at the project's root, and
@@ -131,15 +133,16 @@ build and every other configuration a release build. graft builds with omarchy-a
 `ship.sh --device`, not `xtool dev build`: it also copies the app's resources to the bundle root,
 where Xcode puts them and `Bundle.main` finds them.
 
-**Unlock the phone before you deploy.** An idle phone closes the port the tunnel uses (deploy
-says "The phone didn't answer"), and a locked one can stall an install or refuse the launch.
+**Unlock the device before you deploy.** An idle device closes the port the tunnel uses (deploy
+says "The device didn't answer"), and a locked one can stall an install or refuse the launch.
 Unlock it and deploy again.
 
 After the build, `deploy` signs, opens the tunnel, installs and launches. Signing uses an iOS Development certificate
 and a profile per bundle ID (the app's and its extensions') kept in `graft-state`. Only when one
-is missing, expires within a day or doesn't list the phone (or with `deploy --provision`) does it go
-to App Store Connect with the API key, to register the phone in the team and make them. The rest of
-the time, building and deploying need neither the key nor the internet, only Tailscale to the phone.
+is missing, expires within a day or doesn't list the device (or with `deploy --provision`) does it
+go to App Store Connect with the API key, to register the devices in the team and make them. The
+rest of the time, building and deploying need neither the key nor the internet, only Tailscale to
+the device.
 Profiles it makes are named `omarchy-apple-dev development <bundle id>`, and it replaces only those.
 
 A free Apple ID can't be used: xtool signs with one only inside `xtool dev run`, which needs the
@@ -147,6 +150,25 @@ phone on USB.
 
 New images: `docker pull ghcr.io/brandnewbox/graft:swift-6.4.1`. The SDK stays; only a new
 Xcode (and the image tag for its Swift) means `setup` again.
+
+### Devices
+
+With one device, `IPHONE_TAILNET_IP` and its pairing record are all graft needs. With more, an
+iPhone and an iPad for example, list them in `~/.config/graft/devices`, a line each; the first is
+the default:
+
+```
+# NAME    TAILNET_IP     UDID                        [PORT]
+iphone    100.64.0.5     00008150-001A2B3C4D5E001C
+ipad      100.64.0.9     00008112-0011223344556677   51211
+```
+
+Pair each one (Setup, step 4). `graft pair` prints the UDID, and the record's file name has it:
+`remote_<udid>.plist`. `graft devices` lists the devices, with whether each is paired, and any
+pairing record not listed. `deploy --device NAME` deploys to NAME. The profiles list every device
+in the file, so changing devices doesn't make new ones; a device added to the file goes to App
+Store Connect once, on its first deploy. The app has to support the device: an iPad needs
+`TARGETED_DEVICE_FAMILY` to include 2.
 
 ## An Xcode project
 
@@ -182,15 +204,21 @@ own Xcode download, under Apple's license.
 ## Maintaining
 
 The image holds the toolchain, the scripts in `bin/` (the entrypoint, `setup-sdk`, `iphone-pair`,
-`graft-build`, `graft-deploy`, `iphone-deploy`), the converter and `launcher`, the
-host side of the commands. It's open source only, one per Swift version.
+`graft-build`, `graft-deploy`, `graft-devices`, `iphone-deploy`), graft's copies of some of
+omarchy-apple-dev's tools and `launcher`, the host side of the commands. It's open source only, one
+per Swift version.
 
-`vendor/omarchy-apple-dev/tools/xcodeproj2xtool.py` is a copy of omarchy-apple-dev's converter, under its
-MIT license (`vendor/omarchy-apple-dev/LICENSE`), changed for graft: it reads a configuration given with `--configuration`
-(upstream reads only Release), and it skips resources that are in the project but not on disk. The
-image puts it over upstream's, beside the tools it calls. Its header names the upstream commit it
-came from: when `OMARCHY_REF` moves, diff upstream's file from that commit to the new one, apply
-what's useful, and update the header. CI runs its `--self-test`.
+`vendor/omarchy-apple-dev/tools/` holds copies of omarchy-apple-dev's tools, under its MIT license
+(`vendor/omarchy-apple-dev/LICENSE`), changed for graft; the image puts them over upstream's, beside
+the tools they call:
+
+- `xcodeproj2xtool.py`, the converter: it reads a configuration given with `--configuration`
+  (upstream reads only Release), and it skips resources that are in the project but not on disk.
+  CI runs its `--self-test`.
+- `provision-dev.py`: `--device UDID NAME`, repeatable, so the profiles list every device.
+
+Each one's header names the upstream commit it came from. When `OMARCHY_REF` moves, diff
+upstream's file from that commit to the new one, apply what's useful, and update the header.
 
 GitHub Actions builds it (`.github/workflows/image.yml`): every pull request builds it and checks
 the tools start. To release, tag the commit:

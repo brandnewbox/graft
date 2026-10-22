@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# graft devices: the devices graft deploys to. The launcher mounts ~/.config/graft/devices at
+# /graft/devices; each line is a device, the first the default:
+#
+#   NAME  TAILNET_IP  UDID  [PORT]      e.g.  ipad  100.64.0.9  00008112-001A2B3C4D5E001C
+#
+# PORT is its RemotePairing port, when the tunnel can't find it. Without the file, the one device is
+# IPHONE_TAILNET_IP (port IPHONE_RP_PORT) and the one pairing record, named "phone".
+#
+#   graft-devices                 list them, with whether each is paired
+#   graft-devices --pick [NAME]   print NAME's "UDID TAILNET_IP PORT" (default: the first)
+#   graft-devices --all           print every device's "UDID NAME", for the profiles
+set -euo pipefail
+file=/graft/devices
+records=/state/pymobiledevice3
+
+devices() { # NAME IP UDID PORT, a line each
+  if [ -f "$file" ]; then
+    awk '{ sub(/#.*/, "") } NF { if (NF < 3 || NF > 4) { print FILENAME ":" NR ": expected NAME TAILNET_IP UDID [PORT]" > "/dev/stderr"; exit 1 }
+      print $1, $2, $3, (NF == 4 ? $4 : "-") }' "$file"
+    return
+  fi
+  local found=("$records"/remote_*.plist)
+  if [ -z "${IPHONE_TAILNET_IP:-}" ] || [ "${#found[@]}" != 1 ] || [ ! -f "${found[0]}" ]; then
+    echo "no devices: list them in ~/.config/graft/devices (README: Devices), or set IPHONE_TAILNET_IP with one pairing record" >&2
+    return 1
+  fi
+  local udid=${found[0]##*/remote_}
+  echo phone "$IPHONE_TAILNET_IP" "${udid%.plist}" "${IPHONE_RP_PORT:--}"
+}
+
+list=$(devices)
+case "${1:-}" in
+"")
+  while read -r name ip udid port; do
+    paired=paired
+    [ -f "$records/remote_$udid.plist" ] || paired="not paired (graft pair)"
+    printf '%-10s %-16s %s  %s\n' "$name" "$ip" "$udid" "$paired"
+  done <<<"$list"
+  for r in "$records"/remote_*.plist; do
+    [ -f "$r" ] || continue
+    udid=${r##*/remote_}; udid=${udid%.plist}
+    grep -q " $udid " <<<"$list" || echo "paired, not listed: $udid (add it to ~/.config/graft/devices)"
+  done
+  ;;
+--pick)
+  if [ -n "${2:-}" ]; then
+    line=$(awk -v n="$2" '$1 == n' <<<"$list")
+    [ -n "$line" ] || { echo "no device named $2; devices: $(awk '{ print $1 }' <<<"$list" | paste -sd ' ')" >&2; exit 1; }
+  else
+    line=$(head -n1 <<<"$list")
+  fi
+  read -r name ip udid port <<<"$line"
+  [ -f "$records/remote_$udid.plist" ] ||
+    { echo "$name ($udid) isn't paired: graft pair, on this machine's USB or from a record" >&2; exit 1; }
+  echo "$udid $ip ${port#-}"
+  ;;
+--all)
+  awk '{ print $3, $1 }' <<<"$list"
+  ;;
+*)
+  echo "usage: graft devices" >&2
+  exit 2
+  ;;
+esac

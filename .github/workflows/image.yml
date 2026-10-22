@@ -59,7 +59,7 @@ jobs:
             /home/dev/pymobile3-venv/bin/pymobiledevice3 version
             test -x /home/dev/omarchy-apple-dev/tools/darwin-tools/.build/release/actool
             for f in /usr/local/share/graft/launcher /usr/local/bin/graft-*; do bash -n "$f"; done
-            grep -q "^# graft.s copy" /home/dev/omarchy-apple-dev/tools/xcodeproj2xtool.py
+            for f in xcodeproj2xtool.py provision-dev.py; do grep -q "^# graft.s copy" /home/dev/omarchy-apple-dev/tools/$f; done
             python3 /home/dev/omarchy-apple-dev/tools/xcodeproj2xtool.py --self-test'
 
       - name: Tags

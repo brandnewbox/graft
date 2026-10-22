@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
-# Pairs with the iPhone on the host's USB (the launcher mounts the host's usbmuxd socket) and writes
+# Pairs with the device on the host's USB (the launcher mounts the host's usbmuxd socket) and writes
 # the RemotePairing record, with the host ID pinned so it works from any machine, to
-# /state/pymobiledevice3. Accept on the phone.
+# /state/pymobiledevice3. Accept on the device. Prints its UDID, for ~/.config/graft/devices.
 #
 #   iphone-pair            pair over USB
 #   iphone-pair FILE       import a record made elsewhere (README: pairing on a Mac)
 set -euo pipefail
+records=/state/pymobiledevice3
+hint() {
+  echo "Paired $1. With more than one device, add a line to ~/.config/graft/devices:"
+  echo "  NAME  TAILNET_IP  $1"
+}
 if [ -z "${1:-}" ]; then
-  [ -S /var/run/usbmuxd ] || { echo "no usbmuxd: plug in and unlock the phone (needs usbmuxd on the host)" >&2; exit 1; }
-  exec ~/pymobile3-venv/bin/python ~/omarchy-apple-dev/tools/tailnet-tunnel.py pair
+  [ -S /var/run/usbmuxd ] || { echo "no usbmuxd: plug in and unlock the device (needs usbmuxd on the host)" >&2; exit 1; }
+  before=$(ls "$records")
+  ~/pymobile3-venv/bin/python ~/omarchy-apple-dev/tools/tailnet-tunnel.py pair
+  for r in $(comm -13 <(echo "$before") <(ls "$records")); do
+    case "$r" in remote_*.plist) udid=${r#remote_}; hint "${udid%.plist}" ;; esac
+  done
+  exit
 fi
 name=$(basename "$1")
 [[ "$name" == remote_*.plist ]] || { echo "expected a remote_<udid>.plist pairing record" >&2; exit 1; }
 python3 -c 'import plistlib, sys; sys.exit("host_identifier" not in plistlib.load(open(sys.argv[1], "rb")))' "$1" ||
   { echo "the record has no host_identifier, so it works only on the machine that made it" >&2; exit 1; }
-install -m600 "$1" "/state/pymobiledevice3/$name"
-echo "imported $name"
+install -m600 "$1" "$records/$name"
+udid=${name#remote_}
+hint "${udid%.plist}"
