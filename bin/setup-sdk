@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Builds the iOS SDK from an Xcode .xip into the ios-linux-sdk volume (/sdk): once per machine, and
+# again for a new Xcode. `ios-linux setup` runs it.
+#
+#   setup-sdk XCODE.xip
+#
+# The installer's own steps: build the SDK and register it (~/.swiftpm/swift-sdks, a link into /sdk),
+# then install the build tools and macro server into it, which the image has built already. The
+# Xcode's Swift must match the image's: Xcode 27.1 for Swift 6.4.1.
+set -euo pipefail
+xip=${1:?usage: setup-sdk XCODE.xip}
+rm -rf /sdk/swift-sdks/* /sdk/xtool/*
+SDK_CACHE=/sdk/xtool installer-steps sdk_build_and_install "$xip"
+installer-steps --prebuilt install_darwin_tools
+installer-steps --prebuilt install_oam
+swift sdk list | grep -qx darwin
+# The installer keeps a second copy of the SDK (3.4 GB) to re-register it after a toolchain swap;
+# the registered one is all this needs. The Xcode version files next to it stay, for ship.sh.
+rm -rf /sdk/xtool/darwin-*.xtoolsdk
+echo "iOS SDK ready in the ios-linux-sdk volume."

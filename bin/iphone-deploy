@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Sign a built .app for development and install and launch it on the iPhone over Tailscale.
+#
+#   iphone-deploy APP.app
+#
+# Signing: an iOS Development certificate and a profile per bundle ID (the app's and its
+# extensions'), kept in /state/development. They're made through the App Store Connect API with the
+# phone registered (tools/provision-dev.py, which needs ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_PATH)
+# only when one is missing, expires within a day or leaves out the phone, or with --provision; the
+# rest of the time this needs no Apple account or internet. When it needs the key and has none, it
+# exits 75: the launcher then fetches the key with ASC_KEY_COMMAND and runs it again. Install: a
+# RemotePairing tunnel to
+# IPHONE_TAILNET_IP (port IPHONE_RP_PORT, or upstream's scan of 49152-49167), with the pairing
+# record in /state/pymobiledevice3.
+set -euo pipefail
+provision=0
+if [ "${1:-}" = --provision ]; then provision=1; shift; fi
+app=$(realpath "${1:?usage: iphone-deploy [--provision] APP.app}")
+[ -f "$app/Info.plist" ] || { echo "not an app bundle: $app" >&2; exit 1; }
+: "${IPHONE_TAILNET_IP:?set IPHONE_TAILNET_IP to the Tailscale address of the phone}"
+O=$HOME/omarchy-apple-dev
+dev=$HOME/.config/omarchy-apple-dev/development
+py=$HOME/pymobile3-venv/bin/python
+pmd3=$HOME/pymobile3-venv/bin/pymobiledevice3
+
+records=(/state/pymobiledevice3/remote_*.plist)
+[ "${#records[@]}" = 1 ] && [ -f "${records[0]}" ] ||
+  { echo "need exactly one pairing record in /state/pymobiledevice3 (ios-linux pair)" >&2; exit 1; }
+udid=$(basename "${records[0]}" .plist); udid=${udid#remote_}
+
+bundle_id() { python3 -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleIdentifier"])' "$1/Info.plist"; }
+bid=$(bundle_id "$app")
+bids=("$bid")
+for appex in "$app"/PlugIns/*.appex; do [ -d "$appex" ] && bids+=("$(bundle_id "$appex")"); done
+
+# Whether every bundle ID has a stored profile that lasts another day and lists the phone.
+profiles_ok() {
+  [ -f "$dev/key.pem" ] && [ -f "$dev/cert.der" ] || return 1
+  python3 - "$dev" "$udid" "${bids[@]}" <<'PY'
+import datetime, plistlib, sys
+dev, udid, *bids = sys.argv[1:]
+soon = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+for bid in bids:
+    try:
+        raw = open(f"{dev}/{bid}.mobileprovision", "rb").read()
+    except FileNotFoundError:
+        sys.exit(1)
+    d = plistlib.loads(raw[raw.index(b"<?xml"):raw.rindex(b"</plist>") + 8])
+    if d["ExpirationDate"].replace(tzinfo=datetime.timezone.utc) < soon or udid not in d.get("ProvisionedDevices", []):
+        sys.exit(1)
+PY
+}
+
+if [ "$provision" = 1 ] || ! profiles_ok; then
+  echo "== Development profiles for ${bids[*]} (App Store Connect) =="
+  : "${ASC_KEY_ID:?set ASC_KEY_ID and ASC_ISSUER_ID (an App Store Connect API key) to make them}"
+  if [ ! -f "${ASC_KEY_PATH:-}" ]; then
+    [ -n "${IOS_LINUX_KEY_ON_DEMAND:-}" ] && exit 75
+    echo "set ASC_KEY_COMMAND (or ASC_KEY_PATH) to the App Store Connect API key to make them" >&2
+    exit 1
+  fi
+  "$py" "$O/tools/provision-dev.py" --bundle-id "${bids[@]}" --udid "$udid"
+fi
+
+echo "== Signing =="
+work=$(mktemp -d)
+ipa=$work/$(basename "$app" .app).ipa
+"$O/tools/sign-dev.sh" "$app" "$ipa"
+
+echo "== Tunnel to $IPHONE_TAILNET_IP =="
+"$py" "$O/tools/tailnet-tunnel.py" "$IPHONE_TAILNET_IP" --udid "$udid" ${IPHONE_RP_PORT:+--port "$IPHONE_RP_PORT"} \
+  --hold 900 >"$work/tunnel.log" 2>&1 &
+tunnel=$!
+trap 'kill "$tunnel" 2>/dev/null || true; rm -rf "$work"' EXIT
+for _ in $(seq 40); do
+  grep -q '^RSD ' "$work/tunnel.log" && break
+  kill -0 "$tunnel" 2>/dev/null || break
+  sleep 1
+done
+if ! read -r _ rsd_host rsd_port < <(grep '^RSD ' "$work/tunnel.log"); then
+  cat "$work/tunnel.log" >&2
+  # An idle phone closes its RemotePairing port.
+  echo "The phone didn't answer. Unlock it (Wi-Fi and Tailscale on), then deploy again." >&2
+  exit 1
+fi
+rsd=(--rsd "$rsd_host" "$rsd_port")
+
+echo "== Installing $bid =="
+"$pmd3" apps install "$ipa" "${rsd[@]}"
+echo "== Launching =="
+"$pmd3" mounter auto-mount "${rsd[@]}" >/dev/null 2>&1 || true
+"$pmd3" developer core-device launch-application "$bid" "" "${rsd[@]}"

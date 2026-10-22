@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Opens up the directories under dev's home that builds, xtool and the installer write to, so the
+# container can run as any UID (entrypoint.sh gives dev the caller's). Only these, not the whole home:
+# changing a file's mode or owner copies it into the container's layer, and the toolchain under the
+# home is gigabytes.
+set -euo pipefail
+cd /home/dev
+mkdir -p .cache/xtool .config/omarchy-apple-dev .local/bin .local/share .swiftpm/configuration .swiftpm/security
+chmod 777 . .cache .cache/xtool .config .config/omarchy-apple-dev .local .local/bin .local/share .swiftpm
+chmod -R a+rwX .swiftpm/configuration .swiftpm/security

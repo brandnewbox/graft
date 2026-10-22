@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Runs functions from omarchy-apple-dev's install-toolchain.sh by themselves, against the Swift SDK
+# bundle in DARWIN_SDK_BUNDLE (default: the registered one).
+#
+#   installer-steps [--prebuilt] FUNCTION [ARGS...]
+#
+# The image runs install_darwin_tools and install_oam against a stub bundle, to build the tools and
+# patch the toolchain; setup-sdk runs them again, with --prebuilt, against the real SDK. --prebuilt
+# skips their `swift build`s and installs what the image built: SwiftPM would rebuild everything,
+# because its build database records inode numbers, which differ in every container.
+set -euo pipefail
+prebuilt=0
+if [ "${1:-}" = --prebuilt ]; then prebuilt=1; shift; fi
+export REPO_DIR=$HOME/omarchy-apple-dev
+export SDK_CACHE=${SDK_CACHE:-$HOME/.cache/xtool}
+export DARWIN_SDK_BUNDLE=${DARWIN_SDK_BUNDLE:-$HOME/.swiftpm/swift-sdks/darwin.artifactbundle}
+if [ "$prebuilt" = 1 ]; then
+  swift() { if [ "$1" = build ]; then return 0; fi; command swift "$@"; }
+fi
+eval "$(sed -n -e '/^[a-z_]*() {/,/^}/p' -e '/^[A-Z_]*=[^$(]*$/p' "$REPO_DIR/install-toolchain.sh")"
+"$@"
