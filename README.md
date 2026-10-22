@@ -165,17 +165,27 @@ own Xcode download, under Apple's license.
 
 The image holds the toolchain, the scripts in `bin/` (the entrypoint, `setup-sdk`, `iphone-pair`,
 `iphone-deploy`) and `launcher`, the host side of the commands. It's open source only, one per
-Swift version:
+Swift version.
+
+GitHub Actions builds it (`.github/workflows/image.yml`): every pull request builds it and checks
+the tools start. To release, tag the commit:
 
 ```sh
-docker build -t ghcr.io/brandnewbox/graft:swift-6.4.1 --build-arg SWIFT_VERSION=6.4.1 .
-docker push ghcr.io/brandnewbox/graft:swift-6.4.1
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
-Pushing needs a token with `write:packages` (`gh auth refresh -s write:packages`, then
-`gh auth token | docker login ghcr.io -u USER --password-stdin`). GitHub makes a new package
-private; make it public once, in the package's settings. Never push anything with the SDK in it:
-Apple's license doesn't allow redistributing it.
+That publishes `ghcr.io/brandnewbox/graft:swift-6.4.1`, the tag the `graft` command pulls, and
+`swift-6.4.1-0.2.0`, which stays fixed, to go back to. Users get a release with
+`docker pull ghcr.io/brandnewbox/graft:swift-6.4.1`. To try a branch first, run the workflow from
+the Actions tab with "publish" ticked: it publishes `swift-6.4.1-<short commit>`, which
+`GRAFT_IMAGE` selects. A new Swift version is a new entry in the workflow's `swift` list, with the
+matching Xcode in this README.
+
+The first publish makes the package private; make it public once, in the package's settings on
+GitHub. Never publish anything with the SDK in it: Apple's license doesn't allow redistributing it.
+
+To build one locally, for working on the Dockerfile:
+`docker build -t ghcr.io/brandnewbox/graft:swift-6.4.1 --build-arg SWIFT_VERSION=6.4.1 .`
 
 The entrypoint gives the image's user (UID 1000) the caller's UID and GID at start, so it works for
 anyone; `bin/home-writable` opens up the few home directories that builds write to. `OMARCHY_REF` in

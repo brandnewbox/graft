@@ -30,7 +30,7 @@ RUN cd /usr/local/bin && rm -f python python3 python-config python3-config pip p
 
 # Swift from swift.org, keeping the archive's usr/ level (SwiftPM walks up to usr/lib/swift).
 # Its Swift must match the Xcode the SDK comes from: 6.4.0 for Xcode 27.0.
-ARG SWIFT_VERSION=6.4.0
+ARG SWIFT_VERSION=6.4.1
 RUN curl -fsSL "https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04.tar.gz" \
       | tar -xz --strip-components=1 -C /usr/local \
  && /usr/local/usr/bin/swift --version
