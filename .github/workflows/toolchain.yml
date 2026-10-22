@@ -1,23 +1,25 @@
-# Builds graft's toolchain images (toolchain/), one per Xcode, and checks the tools in them start.
+# Builds graft's toolchain images (toolchain/), one per Xcode in toolchains, and checks the tools in
+# them start.
 #
 #   pull request              build and check
 #   push to main              build, check and publish
-#   Run workflow (Actions)    build, check and publish
+#   Run workflow (Actions)    build, check and publish every Xcode
 #
-# Only when toolchain/ or this file changes, but for Run workflow. Each image publishes as
-# graft-toolchain:xcode-<Xcode> and graft-toolchain:xcode-<Xcode>-<short commit>, and the job's
-# summary has its line for toolchains, pinned by digest. graft runs only the images toolchains pins,
-# so a publish changes nothing for users until a CLI release pins it (cli.yml).
+# Which Xcodes: every one when toolchain/ or this file changes; when only toolchains changes, the
+# ones not pinned by digest yet (a new Xcode). So pinning a digest doesn't build again. Each image
+# publishes as graft-toolchain:xcode-<Xcode> and graft-toolchain:xcode-<Xcode>-<short commit>, and
+# the job's summary has its line for toolchains, pinned by digest. graft runs only the images
+# toolchains pins, so a publish changes nothing for users until a CLI release pins it (RELEASE.md).
 #
 # The images have no Apple software in them (README.md, Trademarks): the SDK is made on each machine.
 name: Toolchain
 
 on:
   pull_request:
-    paths: [toolchain/**, .github/workflows/toolchain.yml]
+    paths: [toolchain/**, toolchains, .github/workflows/toolchain.yml]
   push:
     branches: [main]
-    paths: [toolchain/**, .github/workflows/toolchain.yml]
+    paths: [toolchain/**, toolchains, .github/workflows/toolchain.yml]
   workflow_dispatch:
 
 permissions:
@@ -25,15 +27,38 @@ permissions:
   packages: write
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Which Xcodes
+        id: plan
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          all=0
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] ||
+            git diff --name-only "$BASE" HEAD | grep -qE '^(toolchain/|\.github/workflows/toolchain\.yml$)'; then
+            all=1
+          fi
+          matrix=$(awk -v all="$all" '{ sub(/#.*/, "") } NF == 3 && (all || $3 !~ /@sha256:/) {
+            printf "%s{\"xcode\":\"%s\",\"swift\":\"%s\"}", n++ ? "," : "", $1, $2 }' toolchains)
+          echo "matrix=[$matrix]" >> "$GITHUB_OUTPUT"
+          echo "Building: [$matrix]"
+
   image:
+    needs: plan
+    if: needs.plan.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
       matrix:
-        # Each Xcode with its Swift: the Swift that Xcode ships.
-        include:
-          - xcode: "27.1"
-            swift: "6.4.1"
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       IMAGE: ghcr.io/${{ github.repository }}-toolchain
     steps:

@@ -1,5 +1,6 @@
 # The toolchain image graft runs for each Xcode: the project's Xcode (graft.yml's xcode:, or
-# .xcode-version) picks the line. A release pins each image by digest, so a graft version always
-# runs the same toolchain; the image workflow prints the line for a new image (RELEASE.md).
+# .xcode-version) picks the line. The Toolchain workflow builds an image for each line, with that
+# Swift. A release pins each image by digest, so a graft version always runs the same toolchain; a
+# new Xcode's line has its tag until its image is published (RELEASE.md).
 # XCODE  SWIFT  IMAGE
 27.1     6.4.1  ghcr.io/brandnewbox/graft-toolchain@sha256:b86cb74961362aee8b68f613ac9c4d4ab3869a2eed6082e32954bcf9b2902ac0

@@ -4,15 +4,18 @@ graft has two parts, and each is released on its own:
 
 | Part | What it is | Where it comes from | How it's published |
 | --- | --- | --- | --- |
-| **Toolchain images** | One Docker image per Xcode, with Swift, xtool and the other build tools | `toolchain/` | Automatically, when a change to `toolchain/` merges to main |
+| **Toolchain images** | One Docker image per Xcode, with Swift, xtool and the other build tools | `toolchain/`, for each Xcode in `toolchains` | Automatically, when a change to `toolchain/` or a new Xcode merges to main |
 | **The command** | The `graft` command and its scripts | everything else | When you push a `vX.Y.Z` tag |
 
-The file `toolchains` connects them. It lists, for each Xcode, the exact image graft uses:
+The file `toolchains` connects them. It lists each Xcode, the Swift version that Xcode ships, and
+the exact image graft uses:
 
 ```
 # XCODE  SWIFT  IMAGE
 27.1     6.4.1  ghcr.io/brandnewbox/graft-toolchain@sha256:b86c…
 ```
+
+The Toolchain workflow reads the same file to know which images to build.
 
 Users only get what a release of the command lists in `toolchains`. A new image does nothing until
 you put it in `toolchains` and release the command.
@@ -36,7 +39,8 @@ running the install command again.
 
 For changes to `toolchain/`.
 
-1. Merge the pull request. The Toolchain workflow builds and publishes the image (about 20 minutes).
+1. Merge the pull request. The Toolchain workflow builds and publishes an image for every Xcode in
+   `toolchains` (about 20 minutes).
 2. Open the finished workflow run in the Actions tab. Its summary has a line like this:
 
    ```
@@ -48,19 +52,22 @@ For changes to `toolchain/`.
 
 ## Add a new Xcode
 
-1. In `.github/workflows/toolchain.yml`, add the Xcode and the Swift version it ships to the matrix:
+1. Add a line to `toolchains` with the Xcode, the Swift version it ships, and the image's tag (it
+   has no digest yet):
 
-   ```yaml
-   - xcode: "27.2"
-     swift: "6.4.2"
+   ```
+   27.2     6.4.2  ghcr.io/brandnewbox/graft-toolchain:xcode-27.2
    ```
 
-2. Merge it, then follow steps 2–4 of the toolchain release, but add the new line to `toolchains`
-   instead of replacing one.
+2. Merge it. The Toolchain workflow builds and publishes only the new Xcode's image.
+3. Follow steps 2–4 of the toolchain release: replace the line with the pinned one from the
+   workflow's summary, merge, and release the command.
 
 Each machine then runs `graft setup` once with that Xcode's .xip.
 
-To remove an old Xcode, delete it from the matrix and from `toolchains`. Its published images stay.
+To remove an old Xcode, delete its line from `toolchains`. Its published images stay.
+
+A change to `toolchains` that only pins digests doesn't build anything.
 
 ## If a release fails
 
