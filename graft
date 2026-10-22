@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# graft: build iOS apps on Linux in a container and install them on an iPhone over Tailscale
+# (https://github.com/brandnewbox/graft). The commands are the launcher inside the image, so
+# they change with the image and this file doesn't: it pulls the image if needed and runs that.
+set -euo pipefail
+image=${GRAFT_IMAGE:-ghcr.io/brandnewbox/graft:swift-6.4.1}
+docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
+launcher=$(docker run --rm --entrypoint cat "$image" /usr/local/share/graft/launcher)
+GRAFT_IMAGE=$image exec bash -c "$launcher" graft "$@"

@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-# ios-linux: build iOS apps on Linux in a container and install them on an iPhone over Tailscale
-# (https://github.com/brandnewbox/ios-linux). The commands are the launcher inside the image, so
-# they change with the image and this file doesn't: it pulls the image if needed and runs that.
-set -euo pipefail
-image=${IOS_LINUX_IMAGE:-ghcr.io/brandnewbox/ios-linux:swift-6.4.1}
-docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
-launcher=$(docker run --rm --entrypoint cat "$image" /usr/local/share/ios-linux/launcher)
-IOS_LINUX_IMAGE=$image exec bash -c "$launcher" ios-linux "$@"

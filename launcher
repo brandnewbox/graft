@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Launcher for ios-linux (https://github.com/brandnewbox/ios-linux): builds iOS apps on Linux in its
+# Launcher for graft (https://github.com/brandnewbox/graft): builds iOS apps on Linux in its
 # container, and installs them on an iPhone over Tailscale. It runs on the host. The image carries it
-# (/usr/local/share/ios-linux/launcher) and the ios-linux command runs it from there, so it updates
+# (/usr/local/share/graft/launcher) and the graft command runs it from there, so it updates
 # with the image (README.md). Through that command:
 #
-#   ios-linux setup XCODE.xip     once per machine (and per Xcode): pull the image, make the iOS SDK
-#   ios-linux pair [FILE]         once per phone: pair over this machine's USB, or import a record
-#   ios-linux deploy APP.app      sign, install and launch on the phone (--provision: new profiles)
-#   ios-linux [CMD...]            run CMD in the current directory (default: a shell)
+#   graft setup XCODE.xip     once per machine (and per Xcode): pull the image, make the iOS SDK
+#   graft pair [FILE]         once per phone: pair over this machine's USB, or import a record
+#   graft deploy APP.app      sign, install and launch on the phone (--provision: new profiles)
+#   graft [CMD...]            run CMD in the current directory (default: a shell)
 #
 # The current directory is mounted at the same path. Settings, from the environment or
-# ~/.config/ios-linux/env:
+# ~/.config/graft/env:
 #   IPHONE_TAILNET_IP            the phone's Tailscale address
 #   ASC_KEY_ID, ASC_ISSUER_ID    an App Store Connect API key, for development signing, and either
 #   ASC_KEY_COMMAND              a command that prints its .p8 (op read ..., gpg -d ...), run
@@ -18,13 +18,13 @@
 #   ASC_KEY_PATH                 the .p8 file itself
 #   IPHONE_RP_PORT               the phone's RemotePairing port, if the tunnel can't find it
 set -euo pipefail
-image=${IOS_LINUX_IMAGE:-ghcr.io/brandnewbox/ios-linux:swift-6.4.1}
-config=${XDG_CONFIG_HOME:-$HOME/.config}/ios-linux/env
+image=${GRAFT_IMAGE:-ghcr.io/brandnewbox/graft:swift-6.4.1}
+config=${XDG_CONFIG_HOME:-$HOME/.config}/graft/env
 if [ -f "$config" ]; then set -a; . "$config"; set +a; fi
 
 run() { # [docker run options...] -- CMD...
   local opts=(--rm -i --network host --cap-add NET_ADMIN --device /dev/net/tun
-    -v ios-linux-state:/state -v ios-linux-sdk:/sdk -v "$PWD:$PWD" -w "$PWD"
+    -v graft-state:/state -v graft-sdk:/sdk -v "$PWD:$PWD" -w "$PWD"
     -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e IPHONE_TAILNET_IP -e IPHONE_RP_PORT -e ASC_KEY_ID -e ASC_ISSUER_ID)
   if [ -t 0 ] && [ -t 1 ]; then opts+=(-t); fi
   if [ -n "${ASC_KEY_PATH:-}" ]; then
@@ -37,7 +37,7 @@ run() { # [docker run options...] -- CMD...
 
 case "${1:-}" in
 setup)
-  xip=$(realpath "${2:?usage: ios-linux setup XCODE.xip}")
+  xip=$(realpath "${2:?usage: graft setup XCODE.xip}")
   [ -f "$xip" ] || { echo "no such file: $xip" >&2; exit 1; }
   docker pull "$image" || docker image inspect "$image" >/dev/null
   # Unpacking the .xip takes about 16 GB at its peak; the SDK is 3.4 GB after.
@@ -66,7 +66,7 @@ deploy)
   # Without the key first: most deploys don't go to App Store Connect. When one has to (exit 75),
   # fetch the key into a file in memory for that one run.
   status=0
-  ASC_KEY_PATH='' run -e IOS_LINUX_KEY_ON_DEMAND=1 -- iphone-deploy "$@" || status=$?
+  ASC_KEY_PATH='' run -e GRAFT_KEY_ON_DEMAND=1 -- iphone-deploy "$@" || status=$?
   if [ "$status" != 75 ]; then exit "$status"; fi
   key=$(mktemp -p "${XDG_RUNTIME_DIR:-/dev/shm}" asc-key.XXXXXX)
   trap 'rm -f "$key"' EXIT

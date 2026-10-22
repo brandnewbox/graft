@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # The iOS toolchain from joshuaswarren/omarchy-apple-dev (Swift, xtool, pymobiledevice3, the
 # iPhoneOS SDK) on Ubuntu 24.04, following its docs/DISTROS.md. Full mode: the SDK comes from an
-# Xcode .xip. This builds everything up to the SDK step; `ios-linux setup` adds the SDK.
+# Xcode .xip. This builds everything up to the SDK step; `graft setup` adds the SDK.
 
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
@@ -98,8 +98,8 @@ RUN stub=/tmp/stub.artifactbundle \
  && DARWIN_SDK_BUNDLE=$stub installer-steps install_oam \
  && rm -rf "$stub" ~/.cache/clang ~/.cache/org.swift.swiftpm
 
-# What outlives a container, in two volumes shared by every project: ios-linux-state at /state
-# (pairing records, signing identities, Apple ID auth) and ios-linux-sdk at /sdk (the iOS SDK, made
+# What outlives a container, in two volumes shared by every project: graft-state at /state
+# (pairing records, signing identities, Apple ID auth) and graft-sdk at /sdk (the iOS SDK, made
 # once by `setup` from the user's own Xcode, which can't be in a published image).
 # pymobiledevice3 keeps pairing records in ~/.pymobiledevice3 and tailnet-tunnel.py looks in
 # ~/.local/share/pymobiledevice3: one directory.
@@ -112,11 +112,11 @@ RUN mkdir -p .local/share .config/omarchy-apple-dev .swiftpm \
 COPY --chmod=755 bin/ /usr/local/bin/
 RUN home-writable
 
-# The launcher runs on the host: the ios-linux command reads it from here (README.md).
-COPY --chmod=755 launcher /usr/local/share/ios-linux/launcher
+# The launcher runs on the host: the graft command reads it from here (README.md).
+COPY --chmod=755 launcher /usr/local/share/graft/launcher
 
 # The entrypoint gives dev the caller's UID, then drops to it.
 USER root
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]
-LABEL org.opencontainers.image.source=https://github.com/brandnewbox/ios-linux
+LABEL org.opencontainers.image.source=https://github.com/brandnewbox/graft

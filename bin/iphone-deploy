@@ -25,7 +25,7 @@ pmd3=$HOME/pymobile3-venv/bin/pymobiledevice3
 
 records=(/state/pymobiledevice3/remote_*.plist)
 [ "${#records[@]}" = 1 ] && [ -f "${records[0]}" ] ||
-  { echo "need exactly one pairing record in /state/pymobiledevice3 (ios-linux pair)" >&2; exit 1; }
+  { echo "need exactly one pairing record in /state/pymobiledevice3 (graft pair)" >&2; exit 1; }
 udid=$(basename "${records[0]}" .plist); udid=${udid#remote_}
 
 bundle_id() { python3 -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleIdentifier"])' "$1/Info.plist"; }
@@ -55,7 +55,7 @@ if [ "$provision" = 1 ] || ! profiles_ok; then
   echo "== Development profiles for ${bids[*]} (App Store Connect) =="
   : "${ASC_KEY_ID:?set ASC_KEY_ID and ASC_ISSUER_ID (an App Store Connect API key) to make them}"
   if [ ! -f "${ASC_KEY_PATH:-}" ]; then
-    [ -n "${IOS_LINUX_KEY_ON_DEMAND:-}" ] && exit 75
+    [ -n "${GRAFT_KEY_ON_DEMAND:-}" ] && exit 75
     echo "set ASC_KEY_COMMAND (or ASC_KEY_PATH) to the App Store Connect API key to make them" >&2
     exit 1
   fi
