@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # graft's copy of tools/xcodeproj2xtool.py from joshuaswarren/omarchy-apple-dev, MIT license
-# (converter/LICENSE), taken at d585573d9da52394abba82840f6b5e6d15e304c7. The image puts it over
+# (vendor/omarchy-apple-dev/LICENSE), taken at d585573d9da52394abba82840f6b5e6d15e304c7. The image puts it over
 # upstream's, next to the tools it calls (ibtool, intentbuilderc). graft's changes: --configuration
 # (upstream reads only Release), --print-target, --no-bsp, and resources missing on disk skipped
 # with a warning. When OMARCHY_REF moves, diff upstream's file from that commit to the new one and

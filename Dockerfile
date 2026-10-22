@@ -7,7 +7,7 @@ FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
 
 # DISTROS.md's Ubuntu list, minus libimobiledevice-dev (too old for xtool; built below) and usbmuxd
-# (pairing uses the host's).
+# (devices are paired on a Mac).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       binutils build-essential ca-certificates cmake curl file git gnupg2 libc6-dev \
@@ -112,8 +112,9 @@ RUN mkdir -p .local/share .config/omarchy-apple-dev .swiftpm \
 COPY --chmod=755 bin/ /usr/local/bin/
 RUN home-writable
 
-# graft's copy of the Xcode project converter (converter/), over upstream's: it calls the tools beside it.
-COPY --chmod=755 converter/xcodeproj2xtool.py /home/dev/omarchy-apple-dev/tools/
+# graft's copies of some of omarchy-apple-dev's tools (vendor/omarchy-apple-dev), over upstream's:
+# they call the tools beside them.
+COPY --chmod=755 vendor/omarchy-apple-dev/tools/ /home/dev/omarchy-apple-dev/tools/
 
 # The launcher runs on the host: the graft command reads it from here (README.md).
 COPY --chmod=755 launcher /usr/local/share/graft/launcher

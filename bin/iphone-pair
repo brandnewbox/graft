@@ -1,18 +1,36 @@
 #!/usr/bin/env bash
-# Pairs with the iPhone on the host's USB (the launcher mounts the host's usbmuxd socket) and writes
-# the RemotePairing record, with the host ID pinned so it works from any machine, to
-# /state/pymobiledevice3. Accept on the phone.
+# graft pair: imports a device's RemotePairing record, made on a Mac with the host ID pinned so it
+# works from any machine, into /state/pymobiledevice3, and adds the device to graft's devices
+# (graft-devices).
 #
-#   iphone-pair            pair over USB
-#   iphone-pair FILE       import a record made elsewhere (README: pairing on a Mac)
+#   iphone-pair                           how to pair
+#   iphone-pair NAME TAILNET_IP FILE      import FILE as NAME
 set -euo pipefail
-if [ -z "${1:-}" ]; then
-  [ -S /var/run/usbmuxd ] || { echo "no usbmuxd: plug in and unlock the phone (needs usbmuxd on the host)" >&2; exit 1; }
-  exec ~/pymobile3-venv/bin/python ~/omarchy-apple-dev/tools/tailnet-tunnel.py pair
+records=/state/pymobiledevice3
+if [ $# != 3 ]; then
+  cat >&2 <<'EOF'
+usage: graft pair NAME TAILNET_IP FILE
+
+Adds a device to graft's devices as NAME (graft devices lists them), with the pairing record FILE
+made on a Mac. TAILNET_IP is the device's Tailscale address: its line in `tailscale status`.
+
+1. On the device: Developer Mode on (Settings > Privacy & Security), Wi-Fi on and the Tailscale VPN on.
+2. On a Mac, with the device on its USB: pair it with pymobiledevice3 and pin the host ID
+   (https://github.com/brandnewbox/graft#pair-on-a-mac). That prints the record's path,
+   ~/.pymobiledevice3/remote_<udid>.plist.
+3. Copy the record to this machine.
+4. Here: graft pair NAME TAILNET_IP remote_<udid>.plist
+5. Delete both copies of the record: graft keeps its own. It holds a private key.
+EOF
+  exit 2
 fi
-name=$(basename "$1")
-[[ "$name" == remote_*.plist ]] || { echo "expected a remote_<udid>.plist pairing record" >&2; exit 1; }
-python3 -c 'import plistlib, sys; sys.exit("host_identifier" not in plistlib.load(open(sys.argv[1], "rb")))' "$1" ||
-  { echo "the record has no host_identifier, so it works only on the machine that made it" >&2; exit 1; }
-install -m600 "$1" "/state/pymobiledevice3/$name"
-echo "imported $name"
+name=$1 ip=$2
+graft-devices add --check "$name" "$ip"
+file=$(basename "$3")
+[[ "$file" == remote_*.plist ]] || { echo "expected a remote_<udid>.plist pairing record" >&2; exit 1; }
+python3 -c 'import plistlib, sys; sys.exit("host_identifier" not in plistlib.load(open(sys.argv[1], "rb")))' "$3" ||
+  { echo "the record has no host_identifier, so it works only on the machine that made it: pin it (README, Pair on a Mac)" >&2; exit 1; }
+install -m600 "$3" "$records/$file"
+udid=${file#remote_}; udid=${udid%.plist}
+graft-devices add "$name" "$ip" "$udid"
+echo "Now delete both copies of $file: graft keeps its own."
