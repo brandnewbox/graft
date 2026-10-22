@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1.7
-# The iOS toolchain from joshuaswarren/omarchy-apple-dev (Swift, xtool, pymobiledevice3, the
-# iPhoneOS SDK) on Ubuntu 24.04, following its docs/DISTROS.md. Full mode: the SDK comes from an
-# Xcode .xip. This builds everything up to the SDK step; `graft setup` adds the SDK.
+# graft's toolchain image, one per Xcode: the iOS toolchain from joshuaswarren/omarchy-apple-dev
+# (Swift, xtool, pymobiledevice3, the iPhoneOS SDK) on Ubuntu 24.04, following its docs/DISTROS.md.
+# Full mode: the SDK comes from an Xcode .xip. This builds everything up to the SDK step; `graft
+# setup` adds the SDK. graft's own commands aren't in it: the graft command mounts them at
+# /opt/graft/bin, and its copies of omarchy-apple-dev's tools over upstream's (README, Maintaining).
+#
+#   docker build --build-arg XCODE_VERSION=27.1 --build-arg SWIFT_VERSION=6.4.1 toolchain
 
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
@@ -29,7 +33,7 @@ RUN cd /usr/local/bin && rm -f python python3 python-config python3-config pip p
  && python3.14 -c 'import ssl; assert hasattr(ssl.SSLContext, "set_psk_client_callback")'
 
 # Swift from swift.org, keeping the archive's usr/ level (SwiftPM walks up to usr/lib/swift).
-# Its Swift must match the Xcode the SDK comes from: 6.4.0 for Xcode 27.0.
+# Its Swift must match the Xcode the SDK comes from (XCODE_VERSION, below): 6.4.1 for Xcode 27.1.
 ARG SWIFT_VERSION=6.4.1
 RUN curl -fsSL "https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04.tar.gz" \
       | tar -xz --strip-components=1 -C /usr/local \
@@ -99,8 +103,8 @@ RUN stub=/tmp/stub.artifactbundle \
  && rm -rf "$stub" ~/.cache/clang ~/.cache/org.swift.swiftpm
 
 # What outlives a container, in two volumes shared by every project: graft-state at /state
-# (pairing records, signing identities, Apple ID auth) and graft-sdk at /sdk (the iOS SDK, made
-# once by `setup` from the user's own Xcode, which can't be in a published image).
+# (pairing records, signing identities, Apple ID auth) and graft-sdk-<Xcode> at /sdk (the iOS SDK,
+# made once by `setup` from the user's own Xcode, which can't be in a published image).
 # pymobiledevice3 keeps pairing records in ~/.pymobiledevice3 and tailnet-tunnel.py looks in
 # ~/.local/share/pymobiledevice3: one directory.
 RUN mkdir -p .local/share .config/omarchy-apple-dev .swiftpm \
@@ -112,15 +116,20 @@ RUN mkdir -p .local/share .config/omarchy-apple-dev .swiftpm \
 COPY --chmod=755 bin/ /usr/local/bin/
 RUN home-writable
 
-# graft's copies of some of omarchy-apple-dev's tools (vendor/omarchy-apple-dev), over upstream's:
-# they call the tools beside them.
-COPY --chmod=755 vendor/omarchy-apple-dev/tools/ /home/dev/omarchy-apple-dev/tools/
-
-# The launcher runs on the host: the graft command reads it from here (README.md).
-COPY --chmod=755 launcher /usr/local/share/graft/launcher
+# The Xcode this toolchain is for: setup-sdk takes only its .xip, and graft reads the label. And
+# what the build tools that setup-sdk puts in the SDK came from: when a volume's SDK has another
+# image's, the entrypoint installs this one's.
+ARG XCODE_VERSION=27.1
+USER root
+RUN mkdir -p /usr/local/share/graft-toolchain \
+ && echo "omarchy-apple-dev $OMARCHY_REF swift $SWIFT_VERSION" > /usr/local/share/graft-toolchain/sdk-tools
+ENV GRAFT_XCODE=$XCODE_VERSION
+# graft mounts its commands here.
+ENV PATH=/opt/graft/bin:$PATH
 
 # The entrypoint gives dev the caller's UID, then drops to it.
-USER root
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]
-LABEL org.opencontainers.image.source=https://github.com/brandnewbox/graft
+LABEL org.opencontainers.image.source=https://github.com/brandnewbox/graft \
+      org.brandnewbox.graft.xcode=$XCODE_VERSION \
+      org.brandnewbox.graft.swift=$SWIFT_VERSION

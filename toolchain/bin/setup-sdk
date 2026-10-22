@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Builds the iOS SDK from an Xcode .xip into the graft-sdk-<Xcode> volume (/sdk): once per machine
+# and Xcode. `graft setup` runs it.
+#
+#   setup-sdk XCODE.xip
+#
+# The .xip must be the Xcode this toolchain is for (GRAFT_XCODE): its Swift matches the image's.
+# Then the installer's own steps: build the SDK and register it (~/.swiftpm/swift-sdks, a link into
+# /sdk), then install the build tools and macro server into it, which the image has built already.
+set -euo pipefail
+xip=${1:?usage: setup-sdk XCODE.xip}
+echo "== Checking the .xip is Xcode $GRAFT_XCODE (about a minute) =="
+if got=$(python3 -I "$HOME/omarchy-apple-dev/tools/xip_version.py" "$xip" /tmp/version.plist); then
+  [ "${got%% *}" = "$GRAFT_XCODE" ] ||
+    { echo "this .xip is Xcode ${got%% *}; this toolchain is for Xcode $GRAFT_XCODE" >&2; exit 1; }
+else
+  echo "couldn't read the .xip's Xcode version; going on as Xcode $GRAFT_XCODE" >&2
+fi
+rm -rf /sdk/swift-sdks/* /sdk/xtool/* /sdk/sdk-tools
+SDK_CACHE=/sdk/xtool installer-steps sdk_build_and_install "$xip"
+installer-steps --prebuilt install_darwin_tools
+installer-steps --prebuilt install_oam
+swift sdk list | grep -qx darwin
+cp /usr/local/share/graft-toolchain/sdk-tools /sdk/sdk-tools
+# The installer keeps a second copy of the SDK (3.4 GB) to re-register it after a toolchain swap;
+# the registered one is all this needs. The Xcode version files next to it stay, for ship.sh.
+rm -rf /sdk/xtool/darwin-*.xtoolsdk
+echo "iOS SDK for Xcode $GRAFT_XCODE ready in the graft-sdk-$GRAFT_XCODE volume."

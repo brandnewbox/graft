@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# graft build: builds the app in the current directory for the phone. The launcher runs it in the
+# graft build: builds the app in the current directory for the phone. graft runs it in the
 # container, at the project's root.
 #
 #   graft-build [--configuration NAME | --release] [TARGET]
@@ -7,9 +7,11 @@
 # NAME is the build configuration (default Debug; --release is Release). Debug builds a SwiftPM
 # debug build, every other configuration a release build.
 #
-# An xtool package (xtool.yml here, no graft.yml) builds as it is. An Xcode project gets an xtool
-# adapter first, made by the converter (graft's copy, vendor/omarchy-apple-dev) into
-# .graft/<TARGET>/<NAME> on every build, so it follows the project. graft.yml, every key optional:
+# An xtool package (xtool.yml here, and no project: or target: in graft.yml) builds as it is. An
+# Xcode project gets an xtool adapter first, made by the converter (graft's copy,
+# vendor/omarchy-apple-dev) into .graft/<TARGET>/<NAME> on every build, so it follows the project.
+# graft.yml, every key optional:
+#   xcode: 27.1               the Xcode to build with (graft reads it, to pick the toolchain)
 #   project: App.xcodeproj    the Xcode project (default: the only one here)
 #   target: App               the app target (default: the project's only one)
 # Writes the .app's path to GRAFT_APP_FILE when that is set (graft-deploy reads it).
@@ -30,15 +32,18 @@ O=$HOME/omarchy-apple-dev
 converter=$O/tools/xcodeproj2xtool.py
 
 # graft setup makes the SDK; without it the build fails deep in SwiftPM.
-[ -d "$HOME/.swiftpm/swift-sdks/darwin.artifactbundle" ] ||
-  { echo "no iOS SDK on this machine: download Xcode (README), then graft setup XCODE.xip" >&2; exit 1; }
+if [ ! -d "$HOME/.swiftpm/swift-sdks/darwin.artifactbundle" ]; then
+  echo "No iOS SDK for Xcode $GRAFT_XCODE on this machine. Download Xcode $GRAFT_XCODE's .xip from" >&2
+  echo "https://developer.apple.com/download/all/?q=Xcode, then: graft setup Xcode_$GRAFT_XCODE.xip" >&2
+  exit 1
+fi
 
 setting() { # graft.yml's value for KEY, without quotes or a comment
   [ -f graft.yml ] || return 0
   sed -n "s/^$1:[[:space:]]*//p" graft.yml | sed -e 's/[[:space:]]*#.*$//' -e "s/^[\"']//" -e "s/[\"']\$//" | head -n1
 }
 
-if [ -f xtool.yml ] && [ ! -f graft.yml ]; then
+if [ -f xtool.yml ] && [ -z "$(setting project)$(setting target)" ]; then
   [ -z "$target" ] || { echo "an xtool package has one app: no TARGET" >&2; exit 2; }
   dir=.
 else
