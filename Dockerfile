@@ -7,7 +7,7 @@ FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
 
 # DISTROS.md's Ubuntu list, minus libimobiledevice-dev (too old for xtool; built below) and usbmuxd
-# (pairing uses the host's).
+# (devices are paired on a Mac).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       binutils build-essential ca-certificates cmake curl file git gnupg2 libc6-dev \

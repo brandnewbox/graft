@@ -1,51 +1,36 @@
 #!/usr/bin/env bash
-# graft pair: pairs a device, once, and adds it to graft's devices (graft-devices). Over the host's
-# USB (the launcher mounts the host's usbmuxd socket), or from a record made on a Mac. The
-# RemotePairing record, with the host ID pinned so it works from any machine, goes to
-# /state/pymobiledevice3.
+# graft pair: imports a device's RemotePairing record, made on a Mac with the host ID pinned so it
+# works from any machine, into /state/pymobiledevice3, and adds the device to graft's devices
+# (graft-devices).
 #
 #   iphone-pair                           how to pair
-#   iphone-pair NAME TAILNET_IP           pair over USB; accept on the device
-#   iphone-pair NAME TAILNET_IP FILE      import a record made elsewhere
+#   iphone-pair NAME TAILNET_IP FILE      import FILE as NAME
 set -euo pipefail
 records=/state/pymobiledevice3
-if [ $# -lt 2 ] || [ $# -gt 3 ]; then
+if [ $# != 3 ]; then
   cat >&2 <<'EOF'
-usage: graft pair NAME TAILNET_IP [FILE]
+usage: graft pair NAME TAILNET_IP FILE
 
-Pairs a device once, over USB, and adds it to graft's devices as NAME (graft devices lists them).
-TAILNET_IP is the device's Tailscale address: its line in `tailscale status`. First, on the device:
-Developer Mode on (Settings > Privacy & Security), Wi-Fi on and the Tailscale VPN on.
+Adds a device to graft's devices as NAME (graft devices lists them), with the pairing record FILE
+made on a Mac. TAILNET_IP is the device's Tailscale address: its line in `tailscale status`.
 
-On this machine (needs usbmuxd: sudo apt install usbmuxd): plug the device in, unlock it, run
-    graft pair NAME TAILNET_IP
-and accept on the device.
-
-On a Mac: pair it there with pymobiledevice3 and copy the record it makes, remote_<udid>.plist, to
-this machine (https://github.com/brandnewbox/graft#pair-on-a-mac), then run
-    graft pair NAME TAILNET_IP remote_<udid>.plist
-and delete both copies of the record.
+1. On the device: Developer Mode on (Settings > Privacy & Security), Wi-Fi on and the Tailscale VPN on.
+2. On a Mac, with the device on its USB: pair it with pymobiledevice3 and pin the host ID
+   (https://github.com/brandnewbox/graft#pair-on-a-mac). That prints the record's path,
+   ~/.pymobiledevice3/remote_<udid>.plist.
+3. Copy the record to this machine.
+4. Here: graft pair NAME TAILNET_IP remote_<udid>.plist
+5. Delete both copies of the record: graft keeps its own. It holds a private key.
 EOF
   exit 2
 fi
 name=$1 ip=$2
 graft-devices add --check "$name" "$ip"
-if [ -z "${3:-}" ]; then
-  [ -S /var/run/usbmuxd ] || { echo "no usbmuxd: plug in and unlock the device (needs usbmuxd on the host)" >&2; exit 1; }
-  # The record it writes, new or over the device's last one.
-  marker=$(mktemp)
-  ~/pymobile3-venv/bin/python ~/omarchy-apple-dev/tools/tailnet-tunnel.py pair
-  mapfile -t new < <(find "$records" -maxdepth 1 -name 'remote_*.plist' -newer "$marker" -printf '%f\n' |
-    sed 's/^remote_\(.*\)\.plist$/\1/')
-  rm -f "$marker"
-  [ "${#new[@]}" = 1 ] || { echo "expected one pairing record written in $records, found ${#new[@]}" >&2; exit 1; }
-  udid=${new[0]}
-else
-  file=$(basename "$3")
-  [[ "$file" == remote_*.plist ]] || { echo "expected a remote_<udid>.plist pairing record" >&2; exit 1; }
-  python3 -c 'import plistlib, sys; sys.exit("host_identifier" not in plistlib.load(open(sys.argv[1], "rb")))' "$3" ||
-    { echo "the record has no host_identifier, so it works only on the machine that made it" >&2; exit 1; }
-  install -m600 "$3" "$records/$file"
-  udid=${file#remote_}; udid=${udid%.plist}
-fi
+file=$(basename "$3")
+[[ "$file" == remote_*.plist ]] || { echo "expected a remote_<udid>.plist pairing record" >&2; exit 1; }
+python3 -c 'import plistlib, sys; sys.exit("host_identifier" not in plistlib.load(open(sys.argv[1], "rb")))' "$3" ||
+  { echo "the record has no host_identifier, so it works only on the machine that made it: pin it (README, Pair on a Mac)" >&2; exit 1; }
+install -m600 "$3" "$records/$file"
+udid=${file#remote_}; udid=${udid%.plist}
 graft-devices add "$name" "$ip" "$udid"
+echo "Now delete both copies of $file: graft keeps its own."

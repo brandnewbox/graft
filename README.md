@@ -78,25 +78,15 @@ manage. Set up each device once per machine:
    listed until revealed, see "Pair on a Mac"), Wi-Fi on and the Tailscale VPN on. Wi-Fi is required
    even across the tailnet: on cellular only, the device closes the port the tunnel uses.
 2. **Its Tailscale address:** its line in `tailscale status`.
-3. **Pair it**, over USB, on this machine or on a Mac (below), giving it a name: `iphone`, `ipad`.
-   graft adds it to the devices. The pairing record holds a private key: anyone with it and a route
-   to the device can drive the device. It stays in `graft-state`.
+3. **Pair it** on a Mac, over USB, and import the record here with a name: `iphone`, `ipad`
+   (below). graft adds it to the devices. The pairing record holds a private key: anyone with it
+   and a route to the device can drive the device. graft keeps it in `graft-state`.
 
 `graft pair` alone prints these steps.
 
-### Pair on this machine
-
-Needs `usbmuxd` (`sudo apt install usbmuxd`). Plug the device in, unlock it, run
-
-```sh
-graft pair ipad 100.64.0.9            # NAME TAILNET_IP
-```
-
-and accept on the device. The Mac route is the one that has been run; this one hasn't yet.
-
 ### Pair on a Mac
 
-With the device on the Mac's USB:
+With the device on the Mac's USB, unlocked:
 
 ```sh
 python3.13 -m venv ~/pmd3 && ~/pmd3/bin/pip install pymobiledevice3
@@ -111,15 +101,16 @@ for p in glob.glob(os.path.expanduser("~/.pymobiledevice3/remote_*.plist")):
 PY
 ```
 
-It prints the path of each record, `remote_<udid>.plist`. Copy the device's record to the Linux
-machine (`scp`, or anything that doesn't leave a copy elsewhere), then, there:
+It prints the path of each record, `~/.pymobiledevice3/remote_<udid>.plist`. Copy the device's
+record to the Linux machine, then, there:
 
 ```sh
-graft pair ipad 100.64.0.9 remote_<udid>.plist
+graft pair ipad 100.64.0.9 remote_<udid>.plist    # NAME TAILNET_IP FILE
 ```
 
-and delete both copies of the record. The device ties a pairing to the paired machine's host ID,
-which pymobiledevice3 derives from the hostname; pinning it in the record lets any machine use it.
+and delete both copies of the record, the one on the Mac too; graft keeps its own. The device ties
+a pairing to the paired machine's host ID, which pymobiledevice3 derives from the hostname; pinning
+it in the record lets any machine use it.
 
 ### Manage them
 
