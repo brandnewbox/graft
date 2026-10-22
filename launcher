@@ -1,38 +1,36 @@
 #!/usr/bin/env bash
 # Launcher for graft (https://github.com/brandnewbox/graft): builds iOS apps on Linux in its
-# container, and installs them on an iPhone over Tailscale. It runs on the host. The image carries it
+# container, and installs them on an iPhone or iPad over Tailscale. It runs on the host. The image carries it
 # (/usr/local/share/graft/launcher) and the graft command runs it from there, so it updates
 # with the image (README.md). Through that command:
 #
 #   graft setup XCODE.xip               once per machine (and per Xcode): pull the image, make the SDK
-#   graft pair [FILE]                   once per phone: pair over this machine's USB, or import a record
+#   graft pair NAME TAILNET_IP [FILE]   once per device: pair over this machine's USB, or import a
+#                                       record, and add it to the devices as NAME (alone: how)
 #   graft build [--configuration NAME | --release] [TARGET]
 #                                       build the app in the current directory (graft-build)
 #   graft deploy [--configuration NAME | --release] [--provision] [--device NAME] [TARGET | APP.app]
 #                                       build, then sign, install and launch it on a device
-#   graft devices                       list the devices, with whether each is paired
+#   graft devices [add NAME TAILNET_IP [UDID] [--port PORT] | default NAME | remove NAME]
+#                                       list the devices, or change them (graft-devices)
 #
-# Run build and deploy at the project's root, which is mounted at the same path. Settings, from the
-# environment or ~/.config/graft/env:
-#   IPHONE_TAILNET_IP            the phone's Tailscale address, with one device; with more,
-#                                ~/.config/graft/devices lists them (graft-devices)
+# Run build and deploy at the project's root, which is mounted at the same path. The devices are in
+# ~/.config/graft/devices. Settings, from the environment or ~/.config/graft/env:
 #   ASC_KEY_ID, ASC_ISSUER_ID    an App Store Connect API key, for development signing, and either
 #   ASC_KEY_COMMAND              a command that prints its .p8 (op read ..., gpg -d ...), run
 #                                only when a deploy goes to App Store Connect, or
 #   ASC_KEY_PATH                 the .p8 file itself
-#   IPHONE_RP_PORT               the phone's RemotePairing port, if the tunnel can't find it
 set -euo pipefail
 image=${GRAFT_IMAGE:-ghcr.io/brandnewbox/graft:swift-6.4.1}
-config=${XDG_CONFIG_HOME:-$HOME/.config}/graft/env
-devices=${XDG_CONFIG_HOME:-$HOME/.config}/graft/devices
+config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/graft
+config=$config_dir/env
 if [ -f "$config" ]; then set -a; . "$config"; set +a; fi
 
 run() { # [docker run options...] -- CMD...
   local opts=(--rm -i --network host --cap-add NET_ADMIN --device /dev/net/tun
     -v graft-state:/state -v graft-sdk:/sdk -v "$PWD:$PWD" -w "$PWD"
-    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e IPHONE_TAILNET_IP -e IPHONE_RP_PORT -e ASC_KEY_ID -e ASC_ISSUER_ID)
+    -v "$config_dir:/graft" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e ASC_KEY_ID -e ASC_ISSUER_ID)
   if [ -t 0 ] && [ -t 1 ]; then opts+=(-t); fi
-  if [ -f "$devices" ]; then opts+=(-v "$(realpath "$devices"):/graft/devices:ro"); fi
   if [ -n "${ASC_KEY_PATH:-}" ]; then
     opts+=(-v "$(realpath "${ASC_KEY_PATH/#\~/$HOME}"):/asc/key.p8:ro" -e ASC_KEY_PATH=/asc/key.p8)
   fi
@@ -41,6 +39,7 @@ run() { # [docker run options...] -- CMD...
   docker run "${opts[@]}" "$image" "$@"
 }
 
+mkdir -p "$config_dir"
 case "${1:-}" in
 setup)
   xip=$(realpath "${2:?usage: graft setup XCODE.xip}")
@@ -55,12 +54,15 @@ setup)
   run -v "$xip:/tmp/Xcode.xip:ro" -- setup-sdk /tmp/Xcode.xip
   ;;
 pair)
-  if [ -n "${2:-}" ]; then
-    file=$(realpath "$2")
-    run -v "$file:/tmp/$(basename "$file"):ro" -- iphone-pair "/tmp/$(basename "$file")"
+  shift
+  if [ $# = 3 ]; then
+    file=$(realpath "$3")
+    [ -f "$file" ] || { echo "no such file: $3" >&2; exit 1; }
+    run -v "$file:/tmp/$(basename "$file"):ro" -- iphone-pair "$1" "$2" "/tmp/$(basename "$file")"
+  elif [ $# = 2 ] && [ -S /var/run/usbmuxd ]; then
+    run -v /var/run/usbmuxd:/var/run/usbmuxd -- iphone-pair "$@"
   else
-    [ -S /var/run/usbmuxd ] || { echo "no /var/run/usbmuxd: plug in and unlock the phone (needs usbmuxd)" >&2; exit 1; }
-    run -v /var/run/usbmuxd:/var/run/usbmuxd -- iphone-pair
+    run -- iphone-pair "$@" # how to pair, or no usbmuxd
   fi
   ;;
 build)
@@ -92,10 +94,10 @@ deploy)
 *)
   cat >&2 <<'EOF'
 usage: graft setup XCODE.xip
-       graft pair [FILE]
+       graft pair NAME TAILNET_IP [FILE]
        graft build [--configuration NAME | --release] [TARGET]
        graft deploy [--configuration NAME | --release] [--provision] [--device NAME] [TARGET | APP.app]
-       graft devices
+       graft devices [add NAME TAILNET_IP [UDID] [--port PORT] | default NAME | remove NAME]
 EOF
   exit 2
   ;;

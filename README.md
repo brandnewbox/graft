@@ -1,19 +1,20 @@
 # graft
 
-Build iPhone apps on Linux and install them on an iPhone over Tailscale, with no Mac in the loop.
+Build iPhone and iPad apps on Linux and install them on the devices over Tailscale, with no Mac in
+the loop.
 Like a branch grafted onto another tree's rootstock, the toolchain for Apple's platforms grows on
 Linux here.
 
 A container image with the toolchain from [omarchy-apple-dev](https://github.com/joshuaswarren/omarchy-apple-dev)
 (Swift 6.4, xtool, pymobiledevice3) on Ubuntu 24.04, and a command, `graft`, that starts it
 with what it needs (the current directory, host networking, a TUN device for the tunnel to the
-phone). The commands themselves (`launcher`) ship in the image; the `graft` file only pulls the
+device). The commands themselves (`launcher`) ship in the image; the `graft` file only pulls the
 image and runs them, so the commands update with the image.
 
 Nothing in the image is per project or per person. Two Docker volumes are per machine and shared by
 every project: `graft-sdk`, the iOS SDK, which each machine makes once from its own Xcode
-download (Apple's license keeps it out of the image), and `graft-state`, the phone's pairing
-record and the development signing identities.
+download (Apple's license keeps it out of the image), and `graft-state`, the devices' pairing
+records and the development signing identities. The list of devices is in `~/.config/graft/devices`.
 
 ## Install
 
@@ -30,9 +31,9 @@ so a fresh clone has the command without installing anything; the project's READ
 You need:
 
 - x86_64 Linux with Docker (your user in the `docker` group) and Tailscale, on the tailnet the
-  phone is on;
+  devices are on;
 - 30 GB free for Docker during setup; after, the image is 6.2 GB and the SDK 3.5 GB;
-- an iPhone on iOS 27 with the Tailscale app;
+- an iPhone or iPad on iOS 27 with the Tailscale app;
 - an App Store Connect API key for a paid team: App Store Connect → Users and Access →
   Integrations → App Store Connect API → Team Keys, App Manager role. Making one takes Admin or
   Account Holder, and the .p8 downloads once.
@@ -50,16 +51,14 @@ You need:
 2. **Settings**, in `~/.config/graft/env`:
 
    ```sh
-   IPHONE_TAILNET_IP=100.x.y.z           # `tailscale status`, the phone's line
    ASC_KEY_ID=XXXXXXXXXX
    ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
    ASC_KEY_COMMAND='op read "op://VAULT/ITEM/AuthKey_XXXXXXXXXX.p8"'
-   # IPHONE_RP_PORT=…                    # only if the tunnel can't find the phone; see "Find the port"
    ```
 
    The .p8 can manage the whole team's certificates, devices and profiles, so keep it encrypted.
    `ASC_KEY_COMMAND` is a command that prints it. The launcher runs it only when a deploy has to go
-   to App Store Connect (the first for an app or a phone, then yearly), puts the key in a file in
+   to App Store Connect (the first for an app or a device, then yearly), puts the key in a file in
    memory (`$XDG_RUNTIME_DIR`) for that run, and deletes it after.
 
    - 1Password: attach the .p8 to an item and read it as above (add `--account` for a second
@@ -68,24 +67,41 @@ You need:
      `ASC_KEY_COMMAND='gpg -d ~/.appstoreconnect/AuthKey_XXXXXXXXXX.p8.gpg'`.
    - Or `ASC_KEY_PATH=` the plain .p8.
 
-3. **The phone.** Developer Mode on (Settings → Privacy & Security; without Xcode it isn't listed
-   until revealed, see "Pair on a Mac"), Wi-Fi on and the Tailscale VPN on. Wi-Fi is required even
-   across the tailnet: on cellular only, the phone closes the port the tunnel uses.
+3. **The devices**, below.
 
-4. **Pair it**, once, over USB, on a Mac (below) or on this machine. Here (needs `usbmuxd`:
-   `sudo apt install usbmuxd`): plug the phone in, unlock it, run `graft pair` and
-   accept on the phone. The Mac route is the one that has been run; this one hasn't yet. The record
-   holds a private key: anyone with it and a route to the phone can drive the phone. It stays in
-   `graft-state`.
+## Devices
+
+graft deploys to the devices in `~/.config/graft/devices`, which `graft pair` and `graft devices`
+manage. Set up each device once per machine:
+
+1. **On the device:** Developer Mode on (Settings → Privacy & Security; without Xcode it isn't
+   listed until revealed, see "Pair on a Mac"), Wi-Fi on and the Tailscale VPN on. Wi-Fi is required
+   even across the tailnet: on cellular only, the device closes the port the tunnel uses.
+2. **Its Tailscale address:** its line in `tailscale status`.
+3. **Pair it**, over USB, on this machine or on a Mac (below), giving it a name: `iphone`, `ipad`.
+   graft adds it to the devices. The pairing record holds a private key: anyone with it and a route
+   to the device can drive the device. It stays in `graft-state`.
+
+`graft pair` alone prints these steps.
+
+### Pair on this machine
+
+Needs `usbmuxd` (`sudo apt install usbmuxd`). Plug the device in, unlock it, run
+
+```sh
+graft pair ipad 100.64.0.9            # NAME TAILNET_IP
+```
+
+and accept on the device. The Mac route is the one that has been run; this one hasn't yet.
 
 ### Pair on a Mac
 
-With the phone on the Mac's USB:
+With the device on the Mac's USB:
 
 ```sh
 python3.13 -m venv ~/pmd3 && ~/pmd3/bin/pip install pymobiledevice3
 ~/pmd3/bin/pymobiledevice3 amfi reveal-developer-mode                # if Developer Mode isn't listed
-~/pmd3/bin/pymobiledevice3 lockdown remotepairing --pair             # accept on the phone
+~/pmd3/bin/pymobiledevice3 lockdown remotepairing --pair             # accept on the device
 ~/pmd3/bin/python - <<'PY'                                          # pin the host ID, see below
 import glob, os, plistlib
 from pymobiledevice3.pair_records import generate_host_id
@@ -95,19 +111,37 @@ for p in glob.glob(os.path.expanduser("~/.pymobiledevice3/remote_*.plist")):
 PY
 ```
 
-Copy the printed `remote_<udid>.plist` to the Linux machine, import it with
-`graft pair remote_<udid>.plist`, and delete both copies. The phone ties a pairing to
-the paired machine's host ID, which pymobiledevice3 derives from the hostname; pinning it in the
-record lets any machine use it.
+It prints the path of each record, `remote_<udid>.plist`. Copy the device's record to the Linux
+machine (`scp`, or anything that doesn't leave a copy elsewhere), then, there:
+
+```sh
+graft pair ipad 100.64.0.9 remote_<udid>.plist
+```
+
+and delete both copies of the record. The device ties a pairing to the paired machine's host ID,
+which pymobiledevice3 derives from the hostname; pinning it in the record lets any machine use it.
+
+### Manage them
+
+```sh
+graft devices                            # list them, with whether each is paired
+graft devices default ipad               # the default for deploy (at first, the first paired)
+graft devices add ipad 100.64.0.10       # change its address, or name a record already paired
+graft devices remove ipad                # remove it and its pairing record
+graft deploy --device ipad               # deploy to it
+```
+
+The profiles list every device, so changing devices doesn't make new ones; a new device goes to App
+Store Connect once, on its first deploy. The app has to support the device: an iPad needs
+`TARGETED_DEVICE_FAMILY` to include 2.
 
 ### Find the port
 
-The phone answers on one RemotePairing port, which the tunnel looks for in 49152-49167. It isn't
-fixed: ours was 49152, and 51211 once while the phone was plugged into a Mac. If the phone is
-unlocked and deploy still says "The device didn't answer", find the port and set `IPHONE_RP_PORT`
-(or the device's PORT in `~/.config/graft/devices`, see Devices).
-On a Mac on the same Wi-Fi: `~/pmd3/bin/pymobiledevice3 bonjour remotepairing` (the entry with the
-phone's LAN address).
+A device answers on one RemotePairing port, which the tunnel looks for in 49152-49167. It isn't
+fixed: ours was 49152, and 51211 once while the phone was plugged into a Mac. If the device is
+unlocked and deploy still says "The device didn't answer", find the port and give it to graft:
+`graft devices add ipad 100.64.0.9 --port 51211`. On a Mac on the same Wi-Fi:
+`~/pmd3/bin/pymobiledevice3 bonjour remotepairing` (the entry with the device's LAN address).
 
 ## Use
 
@@ -117,10 +151,10 @@ At the project's root:
 graft build                              # a Debug build of the app
 graft build --release                    # a Release build
 graft build --configuration Beta         # a build of another configuration
-graft deploy                             # build, then sign, install and launch it on the phone
+graft deploy                             # build, then sign, install and launch it on the device
 graft deploy --release                   # the same with a Release build
 graft deploy path/to/MyApp.app           # an app already built: sign, install and launch it
-graft deploy --device ipad               # on another device (see Devices)
+graft deploy --device ipad               # on another device than the default (see Devices)
 ```
 
 The container sees the current directory at the same path, so run graft at the project's root, and
@@ -146,29 +180,10 @@ the device.
 Profiles it makes are named `omarchy-apple-dev development <bundle id>`, and it replaces only those.
 
 A free Apple ID can't be used: xtool signs with one only inside `xtool dev run`, which needs the
-phone on USB.
+device on USB.
 
 New images: `docker pull ghcr.io/brandnewbox/graft:swift-6.4.1`. The SDK stays; only a new
 Xcode (and the image tag for its Swift) means `setup` again.
-
-### Devices
-
-With one device, `IPHONE_TAILNET_IP` and its pairing record are all graft needs. With more, an
-iPhone and an iPad for example, list them in `~/.config/graft/devices`, a line each; the first is
-the default:
-
-```
-# NAME    TAILNET_IP     UDID                        [PORT]
-iphone    100.64.0.5     00008150-001A2B3C4D5E001C
-ipad      100.64.0.9     00008112-0011223344556677   51211
-```
-
-Pair each one (Setup, step 4). `graft pair` prints the UDID, and the record's file name has it:
-`remote_<udid>.plist`. `graft devices` lists the devices, with whether each is paired, and any
-pairing record not listed. `deploy --device NAME` deploys to NAME. The profiles list every device
-in the file, so changing devices doesn't make new ones; a device added to the file goes to App
-Store Connect once, on its first deploy. The app has to support the device: an iPad needs
-`TARGETED_DEVICE_FAMILY` to include 2.
 
 ## An Xcode project
 
