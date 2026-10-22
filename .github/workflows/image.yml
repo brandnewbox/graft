@@ -58,7 +58,7 @@ jobs:
             rcodesign --version
             /home/dev/pymobile3-venv/bin/pymobiledevice3 version
             test -x /home/dev/omarchy-apple-dev/tools/darwin-tools/.build/release/actool
-            bash -n /usr/local/share/graft/launcher'
+            for f in /usr/local/share/graft/launcher /usr/local/bin/graft-build /usr/local/bin/graft-deploy; do bash -n "$f"; done'
 
       - name: Tags
         id: tags

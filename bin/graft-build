@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# graft build: builds the app in the current directory for the phone, a debug build unless
+# --release. The launcher runs it in the container, at the project's root.
+#
+#   graft-build [--release] [TARGET]
+#
+# An xtool package (xtool.yml here, no graft.yml) builds as it is. An Xcode project gets an xtool
+# adapter first, made by omarchy-apple-dev's converter into .graft/<TARGET> on every build, so it
+# follows the project. graft.yml, all optional:
+#   project: App.xcodeproj         the Xcode project (default: the only one here)
+#   target: App                    the app target (default: the converter's choice)
+#   after-convert: scripts/fix     run after the converter: ADAPTER_DIR TARGET CONFIGURATION
+# Writes the .app's path to GRAFT_APP_FILE when that is set (graft-deploy reads it).
+set -euo pipefail
+config=debug target=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --release) config=release ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) [ -z "$target" ] || { echo "usage: graft build [--release] [TARGET]" >&2; exit 2; }; target=$1 ;;
+  esac
+  shift
+done
+O=$HOME/omarchy-apple-dev
+
+setting() { # graft.yml's value for KEY, without quotes or a comment
+  [ -f graft.yml ] || return 0
+  sed -n "s/^$1:[[:space:]]*//p" graft.yml | sed -e 's/[[:space:]]*#.*$//' -e "s/^[\"']//" -e "s/[\"']\$//" | head -n1
+}
+
+if [ -f xtool.yml ] && [ ! -f graft.yml ]; then
+  [ -z "$target" ] || { echo "an xtool package has one app: no TARGET" >&2; exit 2; }
+  dir=.
+else
+  project=$(setting project)
+  if [ -z "$project" ]; then
+    mapfile -t found < <(find . -maxdepth 3 \( -name .graft -o -name Pods -o -name node_modules \) -prune -o \
+      -name '*.xcodeproj' -print | sort)
+    [ "${#found[@]}" = 1 ] ||
+      { echo "${#found[@]} Xcode projects here: name one in graft.yml (project: ...), or run graft at the project's root" >&2; exit 1; }
+    project=${found[0]}
+  fi
+  target=${target:-$(setting target)}
+  hook=$(setting after-convert)
+  case "$hook" in "" | /*) ;; *) hook=./$hook ;; esac
+  name=${target:-app}
+  dir=.graft/$name
+  mkdir -p .graft
+  [ -f .graft/.gitignore ] || echo '*' >.graft/.gitignore
+  # The converter's links are relative, so the new adapter is made at the same depth as $dir. Only
+  # files that changed are copied over it, and what the build writes stays (its build tree and
+  # Package.resolved), so the build stays incremental and the packages' versions stay.
+  new=.graft/.$name.new
+  rm -rf "$new"
+  echo "== Adapter for ${target:-the app target} of $project =="
+  python3 "$O/tools/xcodeproj2xtool.py" "$project" ${target:+--target "$target"} --out "$new"
+  if [ -n "$hook" ]; then "$hook" "$new" "$target" "$config"; fi
+  mkdir -p "$dir"
+  rsync -rlpD --checksum --delete \
+    --exclude /.build --exclude /.swiftpm --exclude /.bsp --exclude /xtool --exclude /Package.resolved \
+    "$new/" "$dir/"
+  rm -rf "$new"
+fi
+
+# ship.sh --device rather than xtool dev build: it puts the resources at the bundle root, where
+# Bundle.main finds them, as Xcode lays an app out.
+echo "== Build ($config) =="
+(cd "$dir" && CONFIGURATION=$config "$O/ship.sh" --device)
+app=$(ls -dt "$dir"/xtool/*.app | head -n1)
+app=${app#./}
+echo "Built $app"
+if [ -n "${GRAFT_APP_FILE:-}" ]; then realpath "$app" >"$GRAFT_APP_FILE"; fi

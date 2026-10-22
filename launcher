@@ -4,13 +4,14 @@
 # (/usr/local/share/graft/launcher) and the graft command runs it from there, so it updates
 # with the image (README.md). Through that command:
 #
-#   graft setup XCODE.xip     once per machine (and per Xcode): pull the image, make the iOS SDK
-#   graft pair [FILE]         once per phone: pair over this machine's USB, or import a record
-#   graft deploy APP.app      sign, install and launch on the phone (--provision: new profiles)
-#   graft [CMD...]            run CMD in the current directory (default: a shell)
+#   graft setup XCODE.xip               once per machine (and per Xcode): pull the image, make the SDK
+#   graft pair [FILE]                   once per phone: pair over this machine's USB, or import a record
+#   graft build [--release] [TARGET]    build the app in the current directory (graft-build)
+#   graft deploy [--release] [--provision] [TARGET | APP.app]
+#                                       build, then sign, install and launch it on the phone
 #
-# The current directory is mounted at the same path. Settings, from the environment or
-# ~/.config/graft/env:
+# Run build and deploy at the project's root, which is mounted at the same path. Settings, from the
+# environment or ~/.config/graft/env:
 #   IPHONE_TAILNET_IP            the phone's Tailscale address
 #   ASC_KEY_ID, ASC_ISSUER_ID    an App Store Connect API key, for development signing, and either
 #   ASC_KEY_COMMAND              a command that prints its .p8 (op read ..., gpg -d ...), run
@@ -57,25 +58,35 @@ pair)
     run -v /var/run/usbmuxd:/var/run/usbmuxd -- iphone-pair
   fi
   ;;
+build)
+  shift
+  run -- graft-build "$@"
+  ;;
 deploy)
   shift
   if [ -z "${ASC_KEY_COMMAND:-}" ]; then
-    run -- iphone-deploy "$@"
+    run -- graft-deploy "$@"
     exit
   fi
   # Without the key first: most deploys don't go to App Store Connect. When one has to (exit 75),
-  # fetch the key into a file in memory for that one run.
+  # fetch the key into a file in memory and run again; the build is incremental by then.
   status=0
-  ASC_KEY_PATH='' run -e GRAFT_KEY_ON_DEMAND=1 -- iphone-deploy "$@" || status=$?
+  ASC_KEY_PATH='' run -e GRAFT_KEY_ON_DEMAND=1 -- graft-deploy "$@" || status=$?
   if [ "$status" != 75 ]; then exit "$status"; fi
   key=$(mktemp -p "${XDG_RUNTIME_DIR:-/dev/shm}" asc-key.XXXXXX)
   trap 'rm -f "$key"' EXIT
   echo "== Fetching the App Store Connect key (ASC_KEY_COMMAND) ==" >&2
   sh -c "$ASC_KEY_COMMAND" >"$key"
   grep -q 'BEGIN PRIVATE KEY' "$key" || { echo "ASC_KEY_COMMAND didn't print a .p8 key" >&2; exit 1; }
-  ASC_KEY_PATH=$key run -- iphone-deploy "$@"
+  ASC_KEY_PATH=$key run -- graft-deploy "$@"
   ;;
 *)
-  run -- "${@:-bash}"
+  cat >&2 <<'EOF'
+usage: graft setup XCODE.xip
+       graft pair [FILE]
+       graft build [--release] [TARGET]
+       graft deploy [--release] [--provision] [TARGET | APP.app]
+EOF
+  exit 2
   ;;
 esac
