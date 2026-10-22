@@ -1,75 +1,84 @@
 # Releasing graft
 
-graft releases two things apart (README.md, Maintaining):
+graft has two parts, and each is released on its own:
 
-- **The toolchain images**, `ghcr.io/brandnewbox/graft-toolchain:xcode-<Xcode>`, one per Xcode, from
-  `toolchain/`. `.github/workflows/toolchain.yml` publishes them.
-- **The command**, `graft.tar.gz` and `install.sh` on a GitHub release, from a `vX.Y.Z` tag.
-  `.github/workflows/cli.yml` makes the release.
+| Part | What it is | Where it comes from | How it's published |
+| --- | --- | --- | --- |
+| **Toolchain images** | One Docker image per Xcode, with Swift, xtool and the other build tools | `toolchain/` | Automatically, when a change to `toolchain/` merges to main |
+| **The command** | The `graft` command and its scripts | everything else | When you push a `vX.Y.Z` tag |
 
-Users get only what a command release pins: `toolchains` names each Xcode's image by digest. So a
-published image changes nothing until a release of the command pins it.
+The file `toolchains` connects them. It lists, for each Xcode, the exact image graft uses:
 
-## The workflows
+```
+# XCODE  SWIFT  IMAGE
+27.1     6.4.1  ghcr.io/brandnewbox/graft-toolchain@sha256:b86c…
+```
 
-`toolchain.yml` runs when `toolchain/` or the workflow changes:
+Users only get what a release of the command lists in `toolchains`. A new image does nothing until
+you put it in `toolchains` and release the command.
 
-- on a pull request, it builds each image in its matrix and checks the tools start;
-- on main, and when run from the Actions tab, it also publishes `xcode-<Xcode>` and
-  `xcode-<Xcode>-<short commit>`. The job's summary has the image's line for `toolchains`, pinned by
-  digest:
+## Release a change to the command
 
-  ```
-  27.1     6.4.1  ghcr.io/brandnewbox/graft-toolchain@sha256:…
-  ```
-
-A build takes about 20 minutes.
-
-`cli.yml` checks the command on every pull request and push to main: shellcheck, the converter's
-self-test, and `toolchains`. On a `v*` tag it also releases. The release stops when an image in
-`toolchains` isn't pinned by digest or isn't published.
-
-## A change to the command only
-
-A change to `graft`, `libexec/` or `vendor/`:
+For changes to `graft`, `libexec/`, `vendor/` or `toolchains`.
 
 1. Merge the pull request.
 2. Tag main and push the tag:
 
    ```sh
+   git switch main && git pull
    git tag v0.3.1 && git push origin v0.3.1
    ```
 
-## A change to a toolchain image
+The CLI workflow makes a GitHub release with `graft.tar.gz` and `install.sh`. Users update by
+running the install command again.
 
-A change to `toolchain/` (a new `OMARCHY_REF`, say):
+## Release a change to a toolchain image
 
-1. Merge the pull request. The toolchain workflow publishes the new images from main.
-2. When it's done, copy each image's line from the job's summary into `toolchains`, in place of
-   that Xcode's line, and merge that too. Test it first if you like: `./graft build` from a checkout
-   runs the image `toolchains` names.
-3. Tag the commit that pins them, as above.
+For changes to `toolchain/`.
 
-## A new Xcode
+1. Merge the pull request. The Toolchain workflow builds and publishes the image (about 20 minutes).
+2. Open the finished workflow run in the Actions tab. Its summary has a line like this:
 
-1. Add the Xcode and the Swift it ships to the matrix in `toolchain.yml`:
+   ```
+   27.1     6.4.1  ghcr.io/brandnewbox/graft-toolchain@sha256:…
+   ```
+
+3. In `toolchains`, replace that Xcode's line with the new one. Merge the change.
+4. Release the command, as above.
+
+## Add a new Xcode
+
+1. In `.github/workflows/toolchain.yml`, add the Xcode and the Swift version it ships to the matrix:
 
    ```yaml
    - xcode: "27.2"
      swift: "6.4.2"
    ```
 
-   and merge it. The workflow publishes its image.
-2. Add the image's line from the job's summary to `toolchains`, and merge that.
-3. Tag the commit, as above. `graft version` then lists the new Xcode, and projects that name it
-   build with it. Each machine makes its SDK once, with `graft setup` and that Xcode's .xip.
+2. Merge it, then follow steps 2–4 of the toolchain release, but add the new line to `toolchains`
+   instead of replacing one.
 
-An Xcode no project uses any longer can leave the matrix and `toolchains`; its published images
-stay.
+Each machine then runs `graft setup` once with that Xcode's .xip.
 
-## Once
+To remove an old Xcode, delete it from the matrix and from `toolchains`. Its published images stay.
 
-The first publish of the images makes the `graft-toolchain` package private: make it public, in
-the package's settings on GitHub.
+## If a release fails
 
-Never publish anything with the SDK in it: Apple's license doesn't allow redistributing it.
+The release stops if a line in `toolchains` is not pinned by `@sha256:` digest, or if the image
+does not exist. Fix `toolchains` and merge the fix. Then move the tag to the new main:
+
+```sh
+git push origin :v0.3.1 && git tag -d v0.3.1
+git switch main && git pull
+git tag v0.3.1 && git push origin v0.3.1
+```
+
+## One-time setup
+
+After the first image is published, open the `graft-toolchain` package on GitHub and make it
+public. Without this, users can't pull it.
+
+## Never
+
+Never publish an image with the iOS SDK in it. Apple's license does not allow it. Each user makes
+the SDK on their own machine with `graft setup`.
