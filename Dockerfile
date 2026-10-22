@@ -112,8 +112,9 @@ RUN mkdir -p .local/share .config/omarchy-apple-dev .swiftpm \
 COPY --chmod=755 bin/ /usr/local/bin/
 RUN home-writable
 
-# graft's copy of the Xcode project converter (converter/), over upstream's: it calls the tools beside it.
-COPY --chmod=755 converter/xcodeproj2xtool.py /home/dev/omarchy-apple-dev/tools/
+# graft's copies of some of omarchy-apple-dev's tools (vendor/omarchy-apple-dev), over upstream's:
+# they call the tools beside them.
+COPY --chmod=755 vendor/omarchy-apple-dev/tools/ /home/dev/omarchy-apple-dev/tools/
 
 # The launcher runs on the host: the graft command reads it from here (README.md).
 COPY --chmod=755 launcher /usr/local/share/graft/launcher

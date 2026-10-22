@@ -161,7 +161,7 @@ The converter reads the configuration's settings, as Xcode does: its Info.plist,
 xcconfig files and compilation conditions. A Debug build can have its own bundle ID or App
 Transport Security settings in the Xcode project, and the adapter follows. The package versions
 are the ones in the project's `Package.resolved`, as in Xcode. Read the converter's `warning:`
-lines; when it gets a project wrong, fix the converter (`converter/`, see Maintaining).
+lines; when it gets a project wrong, fix the converter (graft's copy, in `vendor/`; see Maintaining).
 
 Settings go in `graft.yml` at the project's root. Both keys are optional:
 
@@ -185,8 +185,8 @@ The image holds the toolchain, the scripts in `bin/` (the entrypoint, `setup-sdk
 `graft-build`, `graft-deploy`, `iphone-deploy`), the converter and `launcher`, the
 host side of the commands. It's open source only, one per Swift version.
 
-`converter/xcodeproj2xtool.py` is a copy of omarchy-apple-dev's converter, under its MIT license
-(`converter/LICENSE`), changed for graft: it reads a configuration given with `--configuration`
+`vendor/omarchy-apple-dev/tools/xcodeproj2xtool.py` is a copy of omarchy-apple-dev's converter, under its
+MIT license (`vendor/omarchy-apple-dev/LICENSE`), changed for graft: it reads a configuration given with `--configuration`
 (upstream reads only Release), and it skips resources that are in the project but not on disk. The
 image puts it over upstream's, beside the tools it calls. Its header names the upstream commit it
 came from: when `OMARCHY_REF` moves, diff upstream's file from that commit to the new one, apply

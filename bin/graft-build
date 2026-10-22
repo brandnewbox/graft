@@ -8,7 +8,7 @@
 # debug build, every other configuration a release build.
 #
 # An xtool package (xtool.yml here, no graft.yml) builds as it is. An Xcode project gets an xtool
-# adapter first, made by the converter (converter/ in graft's repository) into
+# adapter first, made by the converter (graft's copy, vendor/omarchy-apple-dev) into
 # .graft/<TARGET>/<NAME> on every build, so it follows the project. graft.yml, every key optional:
 #   project: App.xcodeproj    the Xcode project (default: the only one here)
 #   target: App               the app target (default: the project's only one)
