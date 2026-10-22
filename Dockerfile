@@ -112,8 +112,8 @@ RUN mkdir -p .local/share .config/omarchy-apple-dev .swiftpm \
 COPY --chmod=755 bin/ /usr/local/bin/
 RUN home-writable
 
-# The launcher runs on the host; projects keep a stub that reads it from here (README.md).
-COPY --chmod=644 ios-linux /usr/local/share/ios-linux/launcher
+# The launcher runs on the host: the ios-linux command reads it from here (README.md).
+COPY --chmod=755 launcher /usr/local/share/ios-linux/launcher
 
 # The entrypoint gives dev the caller's UID, then drops to it.
 USER root

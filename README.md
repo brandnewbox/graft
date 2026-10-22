@@ -2,46 +2,25 @@
 
 Build iOS apps on Linux and install them on an iPhone over Tailscale, with no Mac in the loop. A
 container image with the toolchain from [omarchy-apple-dev](https://github.com/joshuaswarren/omarchy-apple-dev)
-(Swift 6.4, xtool, pymobiledevice3) on Ubuntu 24.04, and a launcher that runs on the host and
-starts the container with what it needs (the project, host networking, a TUN device for the tunnel
-to the phone). The image carries the launcher; projects keep a small stub that runs it, so the
-commands below are `scripts/ios-linux <command>` from the project's root.
+(Swift 6.4, xtool, pymobiledevice3) on Ubuntu 24.04, and a command, `ios-linux`, that starts it
+with what it needs (the current directory, host networking, a TUN device for the tunnel to the
+phone). The commands themselves (`launcher`) ship in the image; the `ios-linux` file only pulls the
+image and runs them, so the commands update with the image.
 
 Nothing in the image is per project or per person. Two Docker volumes are per machine and shared by
 every project: `ios-linux-sdk`, the iOS SDK, which each machine makes once from its own Xcode
 download (Apple's license keeps it out of the image), and `ios-linux-state`, the phone's pairing
 record and the development signing identities.
 
-## Add it to a project
-
-Add this stub to the project as `scripts/ios-linux` (executable), and point the project's README at
-the setup below. It reads the launcher out of the image and runs it, so the commands change with the
-image and the stub doesn't; the image tag is pinned here.
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-image=${IOS_LINUX_IMAGE:-ghcr.io/brandnewbox/ios-linux:swift-6.4.1}
-docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
-launcher=$(docker run --rm --entrypoint cat "$image" /usr/local/share/ios-linux/launcher)
-IOS_LINUX_IMAGE=$image exec bash -c "$launcher" ios-linux "$@"
-```
-
-An Xcode project also needs an xtool adapter, a SwiftPM package that builds the app target.
-omarchy-apple-dev's converter writes one:
+## Install
 
 ```sh
-scripts/ios-linux bash -c 'python3 ~/omarchy-apple-dev/tools/xcodeproj2xtool.py App.xcodeproj'
+curl -fsSL https://raw.githubusercontent.com/brandnewbox/ios-linux/main/ios-linux -o ~/.local/bin/ios-linux
+chmod +x ~/.local/bin/ios-linux
 ```
 
-Read its `warning:` lines and check the resources in the `Package.swift` it writes; a project script
-that regenerates the adapter and corrects what the converter misreads keeps it reproducible. Apps
-that read resources through `Bundle.main` need them at the bundle root, as Xcode lays them out:
-build with `CONFIGURATION=debug ~/omarchy-apple-dev/ship.sh --device` in the adapter instead of
-`xtool dev build`.
-
-Paths like `~/omarchy-apple-dev` are inside the container: quote them in `bash -c '...'`, or the
-host's shell expands `~` first.
+The file pins the image tag (`IOS_LINUX_IMAGE` overrides it). A project can also keep a copy of it,
+so a fresh clone has the command without installing anything; the project's README then says where.
 
 ## Setup, once per machine
 
@@ -59,7 +38,7 @@ You need:
    (Xcode 27.1 for the `swift-6.4.1` image), then
 
    ```sh
-   scripts/ios-linux setup ~/Downloads/Xcode_27.1.xip
+   ios-linux setup ~/Downloads/Xcode_27.1.xip
    ```
 
    It pulls the image and makes the SDK in the `ios-linux-sdk` volume: about 7 minutes after the
@@ -91,7 +70,7 @@ You need:
    across the tailnet: on cellular only, the phone closes the port the tunnel uses.
 
 4. **Pair it**, once, over USB, on a Mac (below) or on this machine. Here (needs `usbmuxd`:
-   `sudo apt install usbmuxd`): plug the phone in, unlock it, run `scripts/ios-linux pair` and
+   `sudo apt install usbmuxd`): plug the phone in, unlock it, run `ios-linux pair` and
    accept on the phone. The Mac route is the one that has been run; this one hasn't yet. The record
    holds a private key: anyone with it and a route to the phone can drive the phone. It stays in
    `ios-linux-state`.
@@ -114,7 +93,7 @@ PY
 ```
 
 Copy the printed `remote_<udid>.plist` to the Linux machine, import it with
-`scripts/ios-linux pair remote_<udid>.plist`, and delete both copies. The phone ties a pairing to
+`ios-linux pair remote_<udid>.plist`, and delete both copies. The phone ties a pairing to
 the paired machine's host ID, which pymobiledevice3 derives from the hostname; pinning it in the
 record lets any machine use it.
 
@@ -131,9 +110,9 @@ phone's LAN address).
 From the project's root:
 
 ```sh
-scripts/ios-linux                                    # a shell, the project at the same path
-scripts/ios-linux xtool dev build                    # or one command
-scripts/ios-linux deploy path/to/MyApp.app           # sign, install, launch on the phone
+ios-linux                                    # a shell, the project at the same path
+ios-linux xtool dev build                    # or one command
+ios-linux deploy path/to/MyApp.app           # sign, install, launch on the phone
 ```
 
 The app has to be under the current directory, which is what the container sees.
@@ -155,10 +134,29 @@ phone on USB.
 New images: `docker pull ghcr.io/brandnewbox/ios-linux:swift-6.4.1`. The SDK stays; only a new
 Xcode (and the image tag for its Swift) means `setup` again.
 
+## An Xcode project
+
+xtool builds a SwiftPM package, so an Xcode project needs an adapter: a package that builds the app
+target. omarchy-apple-dev's converter writes one:
+
+```sh
+ios-linux bash -c 'python3 ~/omarchy-apple-dev/tools/xcodeproj2xtool.py App.xcodeproj'
+```
+
+Read its `warning:` lines and check the resources in the `Package.swift` it writes; a project script
+that regenerates the adapter and corrects what the converter misreads keeps it reproducible. Apps
+that read resources through `Bundle.main` need them at the bundle root, as Xcode lays them out:
+build with `CONFIGURATION=debug ~/omarchy-apple-dev/ship.sh --device` in the adapter instead of
+`xtool dev build`.
+
+Paths like `~/omarchy-apple-dev` are inside the container: quote them in `bash -c '...'`, or the
+host's shell expands `~` first.
+
 ## Maintaining
 
 The image holds the toolchain, the scripts in `bin/` (the entrypoint, `setup-sdk`, `iphone-pair`,
-`iphone-deploy`) and the launcher, `ios-linux`. It's open source only, one per Swift version:
+`iphone-deploy`) and `launcher`, the host side of the commands. It's open source only, one per
+Swift version:
 
 ```sh
 docker build -t ghcr.io/brandnewbox/ios-linux:swift-6.4.1 --build-arg SWIFT_VERSION=6.4.1 .
@@ -172,6 +170,6 @@ Apple's license doesn't allow redistributing it.
 
 The entrypoint gives the image's user (UID 1000) the caller's UID and GID at start, so it works for
 anyone; `bin/home-writable` opens up the few home directories that builds write to. `OMARCHY_REF` in
-the Dockerfile pins omarchy-apple-dev, and its installer pins xtool. Projects' stubs run whatever
-launcher the image has, so the launcher can change freely; its commands are the interface projects'
-READMEs document.
+the Dockerfile pins omarchy-apple-dev, and its installer pins xtool. The `ios-linux` file runs
+whatever launcher the image has, so `launcher` can change freely; keep `ios-linux` itself stable,
+since people and projects keep copies of it.
