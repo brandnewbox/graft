@@ -113,10 +113,11 @@ phone's LAN address).
 At the project's root:
 
 ```sh
-graft build                              # a debug build of the app
-graft build --release                    # a release build
+graft build                              # a Debug build of the app
+graft build --release                    # a Release build
+graft build --configuration Beta         # a build of another configuration
 graft deploy                             # build, then sign, install and launch it on the phone
-graft deploy --release                   # the same with a release build
+graft deploy --release                   # the same with a Release build
 graft deploy path/to/MyApp.app           # an app already built: sign, install and launch it
 ```
 
@@ -124,10 +125,14 @@ The container sees the current directory at the same path, so run graft at the p
 an app you deploy has to be under it.
 
 An xtool package (`xtool.yml` at the root) builds as it is, into `xtool/<App>.app`. An Xcode project
-builds through an adapter (below), and `build` and `deploy` take the app target there:
-`graft build MyApp`. graft builds with omarchy-apple-dev's `ship.sh --device`, not
-`xtool dev build`: it also copies the app's resources to the bundle root, where Xcode puts them and
-`Bundle.main` finds them.
+builds through an adapter (below), and `convert`, `build` and `deploy` take the app target there:
+`graft build MyApp`. The configuration is `Debug` unless you give one; `Debug` is a SwiftPM debug
+build and every other configuration a release build. graft builds with omarchy-apple-dev's
+`ship.sh --device`, not `xtool dev build`: it also copies the app's resources to the bundle root,
+where Xcode puts them and `Bundle.main` finds them.
+
+When a command fails because something is missing or out of date, its message says which command
+fixes it.
 
 **Unlock the phone before you deploy.** An idle phone closes the port the tunnel uses (deploy
 says "The phone didn't answer"), and a locked one can stall an install or refuse the launch.
@@ -149,32 +154,41 @@ Xcode (and the image tag for its Swift) means `setup` again.
 ## An Xcode project
 
 xtool builds a SwiftPM package, so an Xcode project needs an adapter: a package that builds one app
-target. On every build, graft makes it with omarchy-apple-dev's converter
-(`tools/xcodeproj2xtool.py`) in `.graft/<Target>/`, so it follows the project. Only the files that
-changed are copied over the last adapter: its build tree and `Package.resolved` stay, and the build
-is incremental. The app is at `.graft/<Target>/xtool/<App>.app`. `.graft/` ignores itself in git.
+target in one configuration. `graft convert` makes it from the project, in
+`graft/<Target>/<Configuration>/`, and the project commits it:
+
+```sh
+graft convert MyApp                      # graft/MyApp/Debug
+graft convert --release MyApp            # graft/MyApp/Release
+```
+
+The converter reads the configuration's settings, as Xcode does: its Info.plist, bundle ID,
+xcconfig files and compilation conditions. A Debug build can have its own bundle ID or App
+Transport Security settings in the Xcode project, and the adapter follows. Read the converter's
+`warning:` lines and check the resources in the `Package.swift` it writes.
+
+You can edit a committed adapter where the converter gets something wrong. The edits stay until the
+next `convert`. Each adapter keeps a hash of what the converter wrote (`.graft-converted`); `build`
+converts again into a scratch directory, which takes a fraction of a second, and stops when the
+output changed, because the project did. Then convert again, check `git diff`, restore the edits
+that are still needed (`git checkout -p`), and commit. `convert` copies only the files that
+changed, and keeps the build tree and `Package.resolved`, so the next build stays incremental.
+Each adapter ignores its build products in git (`.build/`, `.swiftpm/`, `.bsp/`, `xtool/`). The app
+is at `graft/<Target>/<Configuration>/xtool/<App>.app`.
 
 Settings go in `graft.yml` at the project's root. Every key is optional:
 
 ```yaml
-project: ios/MyApp.xcodeproj           # the Xcode project; default: the only one found
-target: MyApp                          # the app target when none is given; default: the only one
-after-convert: scripts/graft-fixups    # a project script that corrects the adapter
+project: ios/MyApp.xcodeproj    # the Xcode project; default: the only one found
+target: MyApp                   # the app target when none is given; default: the only one
+adapters: ios/graft             # where the adapters go; default: graft
 ```
 
 With a `graft.yml`, graft builds the project as an Xcode project even when there is an `xtool.yml`.
+Each key is one line, `key: value`; graft doesn't read more of YAML than that.
 
-The converter doesn't read every project right. Read its `warning:` lines and check the resources
-in the `Package.swift` it writes. An `after-convert` script corrects what it misreads, on every
-build. graft runs it in the container, at the project's root, after the converter and before the
-build, with three arguments:
-
-1. `ADAPTER_DIR`: the adapter the converter just wrote, as a path from the project's root. Change
-   the files there; graft then copies what changed into `.graft/<Target>/`.
-2. `TARGET`: the target from the command or `graft.yml`, or empty when there is none.
-3. `CONFIGURATION`: `debug` or `release`.
-
-If it fails, the build stops. The container has `python3` and the toolchain, not your host's tools.
+The converter is graft's copy of omarchy-apple-dev's `tools/xcodeproj2xtool.py`, in `converter/`
+(see Maintaining).
 
 ## Trademarks
 
@@ -185,8 +199,15 @@ own Xcode download, under Apple's license.
 ## Maintaining
 
 The image holds the toolchain, the scripts in `bin/` (the entrypoint, `setup-sdk`, `iphone-pair`,
-`graft-build`, `graft-deploy`, `iphone-deploy`) and `launcher`, the host side of the commands. It's open source only, one per
-Swift version.
+`graft-convert`, `graft-build`, `graft-deploy`, `iphone-deploy`), the converter and `launcher`, the
+host side of the commands. It's open source only, one per Swift version.
+
+`converter/xcodeproj2xtool.py` is a copy of omarchy-apple-dev's converter, under its MIT license
+(`converter/LICENSE`), changed for graft: it reads a configuration given with `--configuration`
+(upstream reads only Release), and it skips resources that are in the project but not on disk. The
+image puts it over upstream's, beside the tools it calls. Its header names the upstream commit it
+came from: when `OMARCHY_REF` moves, diff upstream's file from that commit to the new one, apply
+what's useful, and update the header. CI runs its `--self-test`.
 
 GitHub Actions builds it (`.github/workflows/image.yml`): every pull request builds it and checks
 the tools start. To release, tag the commit:

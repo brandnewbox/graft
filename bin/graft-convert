@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# graft convert: makes an Xcode project's adapter, for the project to commit (graft-build).
+#
+#   graft-convert [--configuration NAME | --release] [TARGET]
+GRAFT_CONVERT_ONLY=1 exec graft-build "$@"

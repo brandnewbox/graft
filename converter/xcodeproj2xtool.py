@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# graft's copy of tools/xcodeproj2xtool.py from joshuaswarren/omarchy-apple-dev, MIT license
+# (converter/LICENSE), taken at d585573d9da52394abba82840f6b5e6d15e304c7. The image puts it over
+# upstream's, next to the tools it calls (ibtool, intentbuilderc). graft's changes: --configuration
+# (upstream reads only Release), --print-target, --no-bsp, and resources missing on disk skipped
+# with a warning. When OMARCHY_REF moves, diff upstream's file from that commit to the new one and
+# apply what's useful here.
 """Generate an xtool adapter package from an Xcode project.
 
     xcodeproj2xtool.py <path/to/App.xcodeproj> [--target NAME] [--out DIR]
@@ -309,8 +315,11 @@ def sw_sy(v):
 
 
 class Generator:
-    def __init__(self, proj_path, target_name=None, out_dir=None, bundle_id=None):
+    def __init__(self, proj_path, target_name=None, out_dir=None, bundle_id=None,
+                 configuration="Release", bsp=True):
         self.proj_path = proj_path
+        self.configuration = configuration
+        self.bsp = bsp
         self.proj_dir = os.path.dirname(os.path.abspath(proj_path))
         self.data = parse_pbxproj(os.path.join(proj_path, "project.pbxproj"))
         self.objs = self.data["objects"]
@@ -345,7 +354,7 @@ class Generator:
         cl = self.objs.get(cfg_list_id)
         for cfg_id in (cl or {}).get("buildConfigurations", []):
             cfg = self.objs[cfg_id]
-            if cfg.get("name") != "Release":
+            if cfg.get("name") != self.configuration:
                 continue
             base = cfg.get("baseConfigurationReference")
             anchor = cfg.get("baseConfigurationReferenceAnchor")
@@ -361,7 +370,7 @@ class Generator:
                 for l in layers if l]
 
     def target_merged(self, target):
-        """Release settings: project xcconfig < project < target xcconfig < target."""
+        """The configuration's settings: project xcconfig < project < target xcconfig < target."""
         layers = self.config_settings(self.project.get("buildConfigurationList"))
         layers += self.config_settings(target.get("buildConfigurationList"))
         return layers
@@ -1048,6 +1057,13 @@ class Generator:
                 # symlinks (primary + alternates); the in-build actool pass
                 # drops them silently, like Apple's actool drops deselected
                 # icon sets.
+                continue
+            if not os.path.lexists(os.path.join(self.proj_dir, p)):
+                # A stale reference (the file was deleted, the project not
+                # updated). Emitted, it fails the build, and its name can
+                # collide with a real resource's, which splits that one into
+                # its children (dedupe_resources).
+                self.warn(f"resource {p!r} is in the project but not on disk; skipped")
                 continue
             if src_anc and (p == src_anc or p.startswith(src_anc + "/")):
                 pj = os.path.join(self.proj_dir, p)
@@ -1864,10 +1880,19 @@ class Generator:
                       f"{', '.join(other_exts)}")
         return embedded
 
+    def check_configuration(self, target):
+        """Stop unless the target has the configuration, naming the ones it has."""
+        cl = self.objs.get(target.get("buildConfigurationList"), {})
+        names = [self.objs[c].get("name") for c in cl.get("buildConfigurations", [])]
+        if self.configuration not in names:
+            raise SystemExit(f"error: target {target['name']!r} has no configuration "
+                             f"{self.configuration!r} (have: {', '.join(names) or 'none'})")
+
     def run(self):
         target_id, self.target = self.pick_target()
         target = self.target
         name = target["name"]
+        self.check_configuration(target)
         layers = self.target_merged(target)
         self.platform = self.platform_of(layers)
         dev_region = self.project.get("developmentRegion")
@@ -1927,7 +1952,8 @@ class Generator:
         self._write_xtool_env(layers, icon)
         for w in self.warnings:
             print(w, file=sys.stderr)
-        self._write_bsp()
+        if self.bsp:
+            self._write_bsp()
         print(f"wrote {self.out_dir} (Package.swift, xtool.yml, xtool.env, "
               f"{symlink_count} symlinks under Sources/, "
               f"{len(extensions)} extensions"
@@ -3059,6 +3085,13 @@ def main():
                          "rebased (extension IDs that start with the app's "
                          "original ID keep their suffix; the rest get '.' + "
                          "the product name with spaces removed)")
+    ap.add_argument("--configuration", metavar="NAME", default="Release",
+                    help="the build configuration whose settings to read "
+                         "(Info.plist, bundle ID, xcconfig; default: Release)")
+    ap.add_argument("--print-target", action="store_true",
+                    help="print the application target it would convert and stop")
+    ap.add_argument("--no-bsp", action="store_true",
+                    help="don't write .bsp/xtool.json at the project root")
     args = ap.parse_args()
     if args.self_test:
         self_test()
@@ -3068,7 +3101,12 @@ def main():
     if not args.project.endswith(".xcodeproj") or \
             not os.path.isfile(os.path.join(args.project, "project.pbxproj")):
         ap.error(f"{args.project} is not an .xcodeproj directory")
-    Generator(args.project, args.target, args.out, args.bundle_id).run()
+    gen = Generator(args.project, args.target, args.out, args.bundle_id, args.configuration,
+                    bsp=not args.no_bsp)
+    if args.print_target:
+        print(gen.pick_target()[1]["name"])
+        return
+    gen.run()
 
 
 if __name__ == "__main__":
