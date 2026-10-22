@@ -119,3 +119,4 @@ COPY --chmod=644 ios-linux /usr/local/share/ios-linux/launcher
 USER root
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]
+LABEL org.opencontainers.image.source=https://github.com/brandnewbox/ios-linux

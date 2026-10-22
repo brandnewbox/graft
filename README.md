@@ -26,8 +26,9 @@ launcher=$(docker run --rm --entrypoint cat "$image" /usr/local/share/ios-linux/
 IOS_LINUX_IMAGE=$image exec bash -c "$launcher" ios-linux "$@"
 ```
  An Xcode project also needs an xtool adapter: `python3 ~/omarchy-apple-dev/tools/xcodeproj2xtool.py
-App.xcodeproj` in the container writes one; Curbsight's `scripts/generate-xtool` is an example that
-corrects what the converter misreads. Apps that read resources through `Bundle.main` need them at the
+App.xcodeproj` in the container writes one. Check its warnings and the resources in the
+`Package.swift` it writes: a project script that regenerates the adapter and corrects what the
+converter misreads keeps it reproducible. Apps that read resources through `Bundle.main` need them at the
 bundle root, as Xcode lays them out: build with `CONFIGURATION=debug ~/omarchy-apple-dev/ship.sh --device`
 instead of `xtool dev build`.
 
