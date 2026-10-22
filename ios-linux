@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Launcher for ios-linux (https://github.com/brandnewbox/ios-linux): builds iOS apps on Linux in its
 # container, and installs them on an iPhone over Tailscale. It runs on the host. The image carries it
-# (/usr/local/share/ios-linux/launcher) and projects keep a stub that runs that copy, so it updates
-# with the image (README.md, "Add it to a project").
+# (/usr/local/share/ios-linux/launcher) and projects run it through a stub, scripts/ios-linux, so it
+# updates with the image (README.md, "Add it to a project"). Through the stub:
 #
-#   ios-linux setup XCODE.xip     once per machine (and per Xcode): pull the image, make the iOS SDK
-#   ios-linux pair [FILE]         once per phone: pair over this machine's USB, or import a record
-#   ios-linux deploy APP.app      sign, install and launch on the phone (--provision: new profiles)
-#   ios-linux [CMD...]            run CMD in the current directory (default: a shell)
+#   scripts/ios-linux setup XCODE.xip   once per machine (and per Xcode): pull the image, make the SDK
+#   scripts/ios-linux pair [FILE]       once per phone: pair over this machine's USB, or import a record
+#   scripts/ios-linux deploy APP.app    sign, install and launch on the phone (--provision: new profiles)
+#   scripts/ios-linux [CMD...]          run CMD in the current directory (default: a shell)
 #
 # The current directory is mounted at the same path. Settings, from the environment or
 # ~/.config/ios-linux/env:
 #   IPHONE_TAILNET_IP            the phone's Tailscale address
 #   ASC_KEY_ID, ASC_ISSUER_ID    an App Store Connect API key, for development signing, and either
-#   ASC_KEY_COMMAND              a command that prints its .p8 (op document get ..., gpg -d ...), run
+#   ASC_KEY_COMMAND              a command that prints its .p8 (op read ..., gpg -d ...), run
 #                                only when a deploy goes to App Store Connect, or
 #   ASC_KEY_PATH                 the .p8 file itself
 #   IPHONE_RP_PORT               the phone's RemotePairing port, if the tunnel can't find it
