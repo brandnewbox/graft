@@ -181,9 +181,11 @@ build and every other configuration a release build. graft builds with omarchy-a
 `ship.sh --device`, not `xtool dev build`: it also copies the app's resources to the bundle root,
 where Xcode puts them and `Bundle.main` finds them.
 
-**Unlock the device before you deploy.** An idle device closes the port the tunnel uses (deploy
-says "The device didn't answer"), and a locked one can stall an install or refuse the launch.
-Unlock it and deploy again.
+**Unlock the device before you deploy, and keep it unlocked until the app launches.** An idle
+device closes the port the tunnel uses (deploy says "The device didn't answer"), and a locked one
+can stall an install or refuse the launch. When only the launch is refused, deploy says the app is
+installed and the device is locked, with the command that installs and launches it again without
+building: `graft deploy path/to/MyApp.app`.
 
 After the build, `deploy` signs, opens the tunnel, installs and launches. Signing uses an iOS Development certificate
 and a profile per bundle ID (the app's and its extensions') kept in `graft-state`. Only when one
