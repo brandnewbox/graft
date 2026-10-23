@@ -5,7 +5,7 @@
 #                                 install.sh installs) and install.sh
 #
 # A release needs every image in toolchains pinned by digest, so a graft version always runs the
-# same toolchains (README.md, Maintaining).
+# same toolchains (RELEASE.md).
 name: CLI
 
 on:

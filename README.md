@@ -265,25 +265,15 @@ the tools they call:
 Each one's header names the upstream commit it came from. When `OMARCHY_REF` moves, diff
 upstream's file from that commit to the new one, apply what's useful, and update the header.
 
+Releasing the images and the command: [RELEASE.md](RELEASE.md).
+
 ### Toolchain images
-
-`.github/workflows/toolchain.yml` builds an image for each Xcode in its matrix, with that Xcode's
-Swift, and checks the tools start: on pull requests that change `toolchain/`. On main, and when run
-from the Actions tab, it also publishes `ghcr.io/brandnewbox/graft-toolchain:xcode-27.1` and
-`xcode-27.1-<short commit>`, and the job's summary has the image's line for `toolchains`, pinned by
-digest. Publishing changes nothing for users: graft runs only what `toolchains` pins.
-
-A new Xcode is a new matrix entry, `xcode` and the `swift` it ships. Its line goes in `toolchains`
-once it's published.
 
 The entrypoint gives the image's user (UID 1000) the caller's UID and GID at start, so it works for
 anyone; `home-writable` opens up the few home directories that builds write to. `OMARCHY_REF` in
 the Dockerfile pins omarchy-apple-dev, and its installer pins xtool. `setup-sdk` copies build tools
 the image built (actool, the macro server) into the SDK and records which (`/sdk/sdk-tools`); when
 an SDK has another image's, the entrypoint installs the running image's.
-
-The first publish makes the package private; make it public once, in the package's settings on
-GitHub. Never publish anything with the SDK in it: Apple's license doesn't allow redistributing it.
 
 To build one locally, for working on the Dockerfile, and run graft with it:
 
@@ -294,18 +284,7 @@ GRAFT_IMAGE=graft-toolchain:dev graft build
 
 `GRAFT_IMAGE` runs any toolchain image, with the SDK of the Xcode in its label.
 
-### Releases
-
-`.github/workflows/cli.yml` checks the command on every pull request: shellcheck, the converter's
-self-test, and `toolchains`. To release, pin every image in `toolchains` by digest (the lines from
-the image workflow's summary), then tag the commit:
-
-```sh
-git tag v0.3.0 && git push origin v0.3.0
-```
-
-That makes a GitHub release with `graft.tar.gz` and `install.sh`, which installs it. The release
-fails when an image in `toolchains` isn't pinned by digest, or isn't published.
+### The command
 
 To work on the command, run `./graft` from a checkout: it finds `libexec/`, `vendor/` and
 `toolchains` beside itself.
