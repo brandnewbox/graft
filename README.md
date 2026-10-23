@@ -134,17 +134,13 @@ graft devices remove ipad                # remove it and its pairing record
 graft deploy --device ipad               # deploy to it
 ```
 
+Deploy finds a device's RemotePairing port itself and remembers it. If it ever can't, it says so;
+give the port with `graft devices add ipad 100.64.0.9 --port 52299` (a Mac on the same Wi-Fi lists it:
+`~/pmd3/bin/pymobiledevice3 bonjour remotepairing`). graft then tries only that port.
+
 The profiles list every device, so changing devices doesn't make new ones; a new device goes to App
 Store Connect once, on its first deploy. The app has to support the device: an iPad needs
 `TARGETED_DEVICE_FAMILY` to include 2.
-
-### Find the port
-
-A device answers on one RemotePairing port, which the tunnel looks for in 49152-49167. It isn't
-fixed: ours was 49152, and 51211 once while the phone was plugged into a Mac. If the device is
-unlocked and deploy still says "The device didn't answer", find the port and give it to graft:
-`graft devices add ipad 100.64.0.9 --port 51211`. On a Mac on the same Wi-Fi:
-`~/pmd3/bin/pymobiledevice3 bonjour remotepairing` (the entry with the device's LAN address).
 
 ## Use
 
@@ -185,9 +181,11 @@ build and every other configuration a release build. graft builds with omarchy-a
 `ship.sh --device`, not `xtool dev build`: it also copies the app's resources to the bundle root,
 where Xcode puts them and `Bundle.main` finds them.
 
-**Unlock the device before you deploy.** An idle device closes the port the tunnel uses (deploy
-says "The device didn't answer"), and a locked one can stall an install or refuse the launch.
-Unlock it and deploy again.
+**Unlock the device before you deploy, and keep it unlocked until the app launches.** An idle
+device closes the port the tunnel uses (deploy says "The device didn't answer"), and a locked one
+can stall an install or refuse the launch. When only the launch is refused, deploy says the app is
+installed and the device is locked, with the command that installs and launches it again without
+building: `graft deploy path/to/MyApp.app`.
 
 After the build, `deploy` signs, opens the tunnel, installs and launches. Signing uses an iOS Development certificate
 and a profile per bundle ID (the app's and its extensions') kept in `graft-state`. Only when one
@@ -261,6 +259,9 @@ the tools they call:
   (upstream reads only Release), and it skips resources that are in the project but not on disk.
   CI runs its `--self-test`.
 - `provision-dev.py`: `--device UDID NAME`, repeatable, so the profiles list every device.
+- `tailnet-tunnel.py`: without `--port`, it finds the RemotePairing port in 49152-65535 (upstream:
+  49152-49167), first on the port in `--port-file` that worked last, and its exit status tells
+  "nothing answered" (3) from "ports answered, but none was RemotePairing" (4).
 
 Each one's header names the upstream commit it came from. When `OMARCHY_REF` moves, diff
 upstream's file from that commit to the new one, apply what's useful, and update the header.

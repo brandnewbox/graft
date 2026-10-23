@@ -11,8 +11,10 @@
 # --provision; the
 # rest of the time this needs no Apple account or internet. When it needs the key and has none, it
 # exits 75: graft then fetches the key with ASC_KEY_COMMAND and runs it again. Install: a
-# RemotePairing tunnel to the device's Tailscale address (its port, or upstream's scan of
-# 49152-49167), with its pairing record in /state/pymobiledevice3.
+# RemotePairing tunnel to the device's Tailscale address, with its pairing record in
+# /state/pymobiledevice3. The port is the device's PORT in graft-devices when it has one; else the
+# one that worked last (/state/remotepairing-ports), else tools/tailnet-tunnel.py finds it among the
+# open ports in 49152-65535 and keeps it there.
 set -euo pipefail
 provision=0 device=
 while [ $# -gt 1 ]; do
@@ -73,8 +75,8 @@ ipa=$work/$(basename "$app" .app).ipa
 "$O/tools/sign-dev.sh" "$app" "$ipa"
 
 echo "== Tunnel to $host =="
-"$py" "$O/tools/tailnet-tunnel.py" "$host" --udid "$udid" ${port:+--port "$port"} \
-  --hold 900 >"$work/tunnel.log" 2>&1 &
+if [ -n "$port" ]; then find=(--port "$port"); else find=(--port-file /state/remotepairing-ports); fi
+"$py" "$O/tools/tailnet-tunnel.py" "$host" --udid "$udid" "${find[@]}" --hold 900 >"$work/tunnel.log" 2>&1 &
 tunnel=$!
 trap 'kill "$tunnel" 2>/dev/null || true; rm -rf "$work"' EXIT
 for _ in $(seq 40); do
@@ -84,8 +86,21 @@ for _ in $(seq 40); do
 done
 if ! read -r _ rsd_host rsd_port < <(grep '^RSD ' "$work/tunnel.log"); then
   cat "$work/tunnel.log" >&2
-  # An idle device closes its RemotePairing port.
-  echo "The device didn't answer. Unlock it (Wi-Fi and Tailscale on), then deploy again." >&2
+  status=0
+  kill -0 "$tunnel" 2>/dev/null || wait "$tunnel" || status=$?
+  if [ "$status" = 4 ]; then
+    # Its open ports have other services: the RemotePairing port may be one the scan missed.
+    echo "The device answered, but none of its ports took the RemotePairing handshake. If it's" >&2
+    echo "locked, unlock it and deploy again. Else set its port: graft devices add NAME $host $udid" >&2
+    echo "--port PORT (on a Mac on the same Wi-Fi, pymobiledevice3 bonjour remotepairing lists it)." >&2
+  elif [ -n "$port" ]; then
+    echo "The device didn't answer on port $port. Unlock it (Wi-Fi and Tailscale on), then deploy" >&2
+    echo "again. If it still doesn't, its port has changed: set the new one with graft devices add," >&2
+    echo "or take the port out of ~/.config/graft/devices and graft finds it." >&2
+  else
+    # An idle device closes its RemotePairing port.
+    echo "The device didn't answer. Unlock it (Wi-Fi and Tailscale on), then deploy again." >&2
+  fi
   exit 1
 fi
 rsd=(--rsd "$rsd_host" "$rsd_port")
@@ -94,4 +109,32 @@ echo "== Installing $bid =="
 "$pmd3" apps install "$ipa" "${rsd[@]}"
 echo "== Launching =="
 "$pmd3" mounter auto-mount "${rsd[@]}" >/dev/null 2>&1 || true
-"$pmd3" developer core-device launch-application "$bid" "" "${rsd[@]}"
+# As `pymobiledevice3 developer core-device launch-application`, but it tells a locked device from
+# other failures: the CLI says only "The application failed to launch. (code 10002)" for both.
+status=0
+"$py" - "$bid" "$rsd_host" "$rsd_port" <<'PY' || status=$?
+import asyncio, sys
+from pymobiledevice3.exceptions import CoreDeviceError
+from pymobiledevice3.remote.core_device.app_service import AppServiceService
+from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
+
+async def main(bid, host, port):
+    async with RemoteServiceDiscoveryService((host, int(port))) as rsd, AppServiceService(rsd) as apps:
+        try:
+            result = await apps.launch_application(bid)
+        except CoreDeviceError as e:
+            # SpringBoard's reason is in the archived underlying error: 'reason: Locked ("Unable to
+            # launch ... because the device was not, or could not be, unlocked")'.
+            if "could not be, unlocked" in repr(e.user_info):
+                sys.exit(3)
+            raise
+        print(f"launched {bid}, process {result.get('processToken', {}).get('processIdentifier')}")
+
+asyncio.run(main(*sys.argv[1:]))
+PY
+if [ "$status" = 3 ]; then
+  echo "Installed $bid, but it didn't launch: the device is locked. Unlock it, then open the app on it, or" >&2
+  echo "install and launch it again without building: graft deploy $app" >&2
+  exit 1
+fi
+[ "$status" = 0 ] || exit "$status"
