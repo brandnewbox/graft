@@ -4,7 +4,8 @@
 #
 #   NAME  TAILNET_IP  UDID  [PORT]      e.g.  ipad  100.64.0.9  00008112-001A2B3C4D5E001C
 #
-# PORT is its RemotePairing port, when the tunnel can't find it.
+# PORT is its RemotePairing port, when the tunnel can't find it; the tunnel then tries only that
+# port. Without one, it finds the port (see iphone-deploy).
 #
 #   graft-devices                                   list them, with whether each is paired
 #   graft-devices add NAME TAILNET_IP [UDID] [--port PORT]
