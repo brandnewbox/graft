@@ -33,6 +33,9 @@ jobs:
       - name: Converter
         run: python3 vendor/omarchy-apple-dev/tools/xcodeproj2xtool.py --self-test
 
+      - name: Static frameworks
+        run: libexec/drop-static-frameworks --self-test
+
       - name: Toolchains
         run: |
           awk '{ sub(/#.*/, "") } NF && NF != 3 { print "toolchains:" NR ": expected XCODE SWIFT IMAGE"; bad = 1 }
