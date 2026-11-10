@@ -179,7 +179,9 @@ builds through an adapter (below), and `build` and `deploy` take the app target 
 `graft build MyApp`. The configuration is `Debug` unless you give one; `Debug` is a SwiftPM debug
 build and every other configuration a release build. graft builds with omarchy-apple-dev's
 `ship.sh --device`, not `xtool dev build`: it also copies the app's resources to the bundle root,
-where Xcode puts them and `Bundle.main` finds them.
+where Xcode puts them and `Bundle.main` finds them. Then it leaves out static frameworks that xtool
+copied into `Frameworks/`, as Xcode does: their code is already in the app, and they can't be signed
+(`libexec/drop-static-frameworks`).
 
 **Unlock the device before you deploy, and keep it unlocked until the app launches.** An idle
 device closes the port the tunnel uses (deploy says "The device didn't answer"), and a locked one

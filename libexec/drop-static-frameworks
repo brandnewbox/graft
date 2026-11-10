@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# Removes static frameworks from a built .app, as Xcode leaves them out. graft-build runs it after
+# the build.
+#
+#   drop-static-frameworks APP.app
+#   drop-static-frameworks --self-test
+#
+# A static framework's code is linked into the app's binary, so the app doesn't need the framework
+# at run time. xtool doesn't copy a static framework into Frameworks/ when its binary is an ar
+# archive, but it does copy one whose archives are inside a fat (universal) Mach-O file, such as
+# sentry-cocoa's Sentry or GoogleAdsOnDeviceConversion. rcodesign can't sign that copy, so the
+# deploy fails (https://github.com/xtool-org/xtool/issues/130). This removes a framework only when
+# every slice of its binary is an archive, so it changes only builds that can't be signed. Remove
+# it when xtool stops copying them.
+set -euo pipefail
+case "${1:-}" in
+  --self-test | *.app | *.app/) ;;
+  *) echo "usage: drop-static-frameworks APP.app | --self-test" >&2; exit 2 ;;
+esac
+exec python3 - "$1" <<'EOF'
+import os, plistlib, shutil, struct, sys, tempfile
+
+ARCHIVE = (b"!<arch>\n", b"!<thin>\n")
+FAT = 0xCAFEBABE  # fat_arch: cputype, cpusubtype, offset, size, align (32-bit)
+FAT_64 = 0xCAFEBABF  # fat_arch_64: cputype, cpusubtype, offset, size (64-bit), align, reserved
+MAX_SLICES = 64
+
+
+def is_static(path):
+    """Whether the binary at PATH is an ar archive, or a fat file of nothing but ar archives."""
+    with open(path, "rb") as f:
+        head = f.read(8)
+        if head in ARCHIVE:
+            return True
+        if len(head) < 8:
+            return False
+        magic, count = struct.unpack(">II", head)
+        if magic not in (FAT, FAT_64) or not 0 < count <= MAX_SLICES:
+            return False
+        entry = ">iiIII" if magic == FAT else ">iiQQIi"
+        offsets = []
+        for _ in range(count):
+            data = f.read(struct.calcsize(entry))
+            if len(data) < struct.calcsize(entry):
+                return False
+            offsets.append(struct.unpack(entry, data)[2])
+        for offset in offsets:
+            f.seek(offset)
+            if f.read(8) not in ARCHIVE:
+                return False
+        return True
+
+
+def executable(framework):
+    """The framework's binary: CFBundleExecutable in its Info.plist, else its name."""
+    name = os.path.basename(framework)[: -len(".framework")]
+    try:
+        with open(os.path.join(framework, "Info.plist"), "rb") as f:
+            name = plistlib.load(f).get("CFBundleExecutable", name)
+    except (OSError, plistlib.InvalidFileException):
+        pass
+    return os.path.join(framework, name)
+
+
+def drop(app):
+    dirs = [os.path.join(app, "Frameworks")]
+    plugins = os.path.join(app, "PlugIns")
+    if os.path.isdir(plugins):
+        dirs += [os.path.join(plugins, p, "Frameworks") for p in sorted(os.listdir(plugins))]
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for name in sorted(os.listdir(d)):
+            framework = os.path.join(d, name)
+            binary = executable(framework)
+            if name.endswith(".framework") and os.path.isfile(binary) and is_static(binary):
+                shutil.rmtree(framework)
+                print(f"left out {os.path.relpath(framework, app)}: a static library, linked into the app")
+        if not os.listdir(d):
+            os.rmdir(d)
+
+
+def fat(slices, wide=False):
+    """A fat file holding SLICES, each at a 16-byte aligned offset."""
+    entry = ">iiQQIi" if wide else ">iiIII"
+    header = 8 + len(slices) * struct.calcsize(entry)
+    out, table, offset = b"", b"", (header + 15) // 16 * 16
+    for i, s in enumerate(slices):
+        fields = (0x0100000C, i, offset, len(s), 4) + ((0,) if wide else ())
+        table += struct.pack(entry, *fields)
+        padded = s + b"\0" * (-len(s) % 16)
+        out += padded
+        offset += len(padded)
+    head = struct.pack(">II", FAT_64 if wide else FAT, len(slices)) + table
+    return head + b"\0" * ((header + 15) // 16 * 16 - len(head)) + out
+
+
+def self_test():
+    archive, dylib = b"!<arch>\nobjects", struct.pack("<I", 0xFEEDFACF) + b"\0" * 12
+    cases = {
+        "Archive": (archive, True),
+        "FatArchive": (fat([archive, archive]), True),
+        "Fat64Archive": (fat([archive], wide=True), True),
+        "Dylib": (dylib, False),
+        "FatDylib": (fat([dylib, dylib]), False),
+        "FatMixed": (fat([archive, dylib]), False),
+        "Truncated": (fat([archive])[:12], False),
+        "Empty": (b"", False),
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        app = os.path.join(tmp, "App.app")
+        for name, (data, _) in cases.items():
+            # Named by Info.plist, to check that's the binary it reads.
+            framework = os.path.join(app, "Frameworks", f"{name}.framework")
+            os.makedirs(framework)
+            with open(os.path.join(framework, "Info.plist"), "wb") as f:
+                plistlib.dump({"CFBundleExecutable": f"{name}Binary"}, f)
+            with open(os.path.join(framework, f"{name}Binary"), "wb") as f:
+                f.write(data)
+        appex = os.path.join(app, "PlugIns", "Widget.appex", "Frameworks", "Only.framework")
+        os.makedirs(appex)
+        with open(os.path.join(appex, "Only"), "wb") as f:
+            f.write(fat([archive]))
+        drop(app)
+        failed = [n for n, (_, static) in cases.items()
+                  if os.path.exists(os.path.join(app, "Frameworks", f"{n}.framework")) == static]
+        if os.path.exists(os.path.dirname(appex)):
+            failed.append("Widget.appex (and its emptied Frameworks/)")
+    if failed:
+        sys.exit("self-test failed: " + ", ".join(failed))
+    print("self-test passed")
+
+
+if sys.argv[1] == "--self-test":
+    self_test()
+else:
+    drop(sys.argv[1])
+EOF

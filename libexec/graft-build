@@ -95,5 +95,7 @@ echo "== Build ($configuration) =="
 (cd "$dir" && CONFIGURATION=$mode "$O/ship.sh" --device)
 app=$(ls -dt "$dir"/xtool/*.app | head -n1)
 app=${app#./}
+# xtool copies some static frameworks into the app, where they can't be signed.
+drop-static-frameworks "$app"
 echo "Built $app"
 if [ -n "${GRAFT_APP_FILE:-}" ]; then realpath "$app" >"$GRAFT_APP_FILE"; fi
